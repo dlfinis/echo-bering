@@ -63,7 +63,31 @@ Archivos de audio pre-procesados (formato óptimo: 16kHz, mono):
 - **`sources/test_audio_1m.wav`**: Audio de 1 minuto 
 - **`sources/test_audio.wav`**: Audio completo
 
-### 4. Configuración de Prueba
+### 4. Configuraciones Base por Caso de Uso
+
+El sistema incluye configuraciones base optimizadas para diferentes escenarios:
+
+#### Videos Cortos (<30 minutos)
+- **Archivo**: `config.base.groq.short.yaml`
+- **Características**: Rápido, económico, sin chunking necesario
+
+#### Videos Medianos (30min - 2h)  
+- **Archivo**: `config.base.groq.medium.yaml`
+- **Características**: Balance calidad/costo, chunking automático
+
+#### Videos Largos (>2h)
+- **Archivo**: `config.base.mlx.long.yaml`  
+- **Características**: Procesamiento local sin costos API
+
+#### Contenido Conversacional (Múltiples Hablantes)
+- **Archivo**: `config.base.assemblyai.conversation.yaml`
+- **Características**: Diarización automática de hablantes
+
+#### Máxima Calidad (Cualquier duración)
+- **Archivo**: `config.base.assemblyai.yaml`
+- **Características**: Máxima precisión, word-level timestamps
+
+### 5. Configuración de Prueba
 
 Crear archivo `config.test.yaml` para pruebas:
 

@@ -18,6 +18,7 @@ Echo-Bering es una herramienta CLI/TUI que procesa videos de cualquier duración
 - [Diagrama de Componentes](./Arquitectura/Diagrama_de_Componentes.md)
 - [Pipeline Principal](./Flujos_de_Negocio/Pipeline_Principal.md)
 - [Estrategia de Pruebas](./testing/Estrategia_de_Pruebas.md)
+- [Guía para Casos Extremos](./Guias_Operativas/Guia_Casos_Extremos.md)
 
 ## Convenciones de Documentación
 
