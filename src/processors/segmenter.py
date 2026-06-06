@@ -23,6 +23,7 @@ from src.processors.transcript_processor import (
 from src.providers.asr.base import ProviderCapabilities
 from src.providers.llm.base import LLMProvider
 from src.utils.errors import ProviderError
+from src.utils.json_extractor import extract_json_from_llm_response
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -32,18 +33,28 @@ DEFAULT_MAX_RETRIES = 2
 
 
 def _extract_json_from_response(response: str) -> List[Dict[str, Any]]:
-    """Extract JSON array from LLM response text."""
-    # Find first [ and last ]
-    start = response.find("[")
-    end = response.rfind("]")
-    if start == -1 or end == -1 or start >= end:
-        raise ValueError("No JSON array found in response")
-    
-    json_str = response[start:end+1]
+    """Extract JSON array from LLM response text with robust parsing."""
+    # Use the robust JSON extractor
     try:
-        return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in response: {e}")
+        # First, try to parse as array directly
+        parsed = extract_json_from_llm_response(response)
+        if isinstance(parsed, list):
+            return parsed
+        else:
+            # If it's a single object, wrap in array
+            return [parsed]
+    except Exception:
+        # Fallback to original logic
+        start = response.find("[")
+        end = response.rfind("]")
+        if start == -1 or end == -1 or start >= end:
+            raise ValueError("No JSON array found in response")
+        
+        json_str = response[start:end+1]
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in response: {e}")
 
 
 class PromptManager:

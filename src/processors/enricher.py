@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Optional
 
 from src.models.chapter import Chapter, EnrichedChapter
-from src.processors.segmenter import PromptManager, _extract_json_from_response
+from src.processors.segmenter import PromptManager
 from src.providers.llm.base import LLMProvider
 from src.utils.errors import ProviderError
+from src.utils.json_extractor import extract_json_from_llm_response
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -131,7 +132,7 @@ class MetadataEnricher:
             json.JSONDecodeError: If response is not valid JSON.
             ValueError: If parsed data does not match expected structure.
         """
-        data = _extract_json_from_response(text)
+        data = extract_json_from_llm_response(text)
 
         if not isinstance(data, dict):
             raise ValueError(f"Expected JSON object for enrichment, got {type(data).__name__}")
