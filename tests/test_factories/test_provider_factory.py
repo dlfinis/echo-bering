@@ -14,7 +14,49 @@ from src.providers.llm.base import LLMProvider
 from src.providers.llm.deepseek_llm import DeepSeekLLMProvider
 from src.providers.llm.groq_llm import GroqLLMProvider
 from src.providers.llm.openai_llm import OpenAILLMProvider
-from src.utils.errors import ConfigError
+from src.utils.errors import ConfigError, PermanentProviderError
+
+
+class TestProviderFactoryPermanentProviderError:
+    """Test error handling for PermanentProviderError during construction."""
+
+    def test_create_asr_permanent_error_wrapped(self):
+        """PermanentProviderError during ASR creation is wrapped as ConfigError."""
+        class FailingASR(ASRProvider):
+            def __init__(self, **kwargs):
+                raise PermanentProviderError("Init failed")
+
+            async def transcribe(self, audio_path: str):
+                raise NotImplementedError
+
+            async def supports_file(self, audio_path: str) -> bool:
+                return False
+
+        ProviderFactory.register_asr("failing_asr", lambda **kwargs: FailingASR(**kwargs))
+
+        with patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}):
+            with pytest.raises(ConfigError) as exc_info:
+                ProviderFactory.create_asr("failing_asr")
+            assert "Init failed" in str(exc_info.value)
+
+    def test_create_llm_permanent_error_wrapped(self):
+        """PermanentProviderError during LLM creation is wrapped as ConfigError."""
+        class FailingLLM(LLMProvider):
+            def __init__(self, **kwargs):
+                raise PermanentProviderError("LLM init failed")
+
+            async def generate(self, prompt: str, system_prompt=None, response_format=None):
+                raise NotImplementedError
+
+            def supports_json_mode(self) -> bool:
+                return False
+
+        ProviderFactory.register_llm("failing_llm", lambda **kwargs: FailingLLM(**kwargs))
+
+        with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
+            with pytest.raises(ConfigError) as exc_info:
+                ProviderFactory.create_llm("failing_llm")
+            assert "LLM init failed" in str(exc_info.value)
 
 
 class TestProviderFactoryCreateASR:

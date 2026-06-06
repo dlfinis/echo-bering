@@ -217,3 +217,106 @@ class TestGroqASRProvider:
         with pytest.raises(PermanentProviderError) as exc_info:
             await provider.transcribe("/nonexistent/audio.wav")
         assert "not found" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_transcribe_raises_transient_on_server_error(self, provider, tmp_path):
+        """500-level server errors raise TransientProviderError."""
+        audio_path = tmp_path / "test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        from groq import APIStatusError
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_error = APIStatusError(
+            message="Internal server error",
+            response=mock_response,
+            body=None,
+        )
+
+        mock_client = MagicMock()
+        mock_transcriptions = MagicMock()
+        mock_transcriptions.create.side_effect = mock_error
+        mock_client.audio = MagicMock()
+        mock_client.audio.transcriptions = mock_transcriptions
+
+        with patch("src.providers.asr.groq_asr.Groq", return_value=mock_client):
+            with pytest.raises(TransientProviderError) as exc_info:
+                await provider.transcribe(str(audio_path))
+            assert 500 == exc_info.value.status_code
+
+    @pytest.mark.asyncio
+    async def test_transcribe_raises_permanent_on_api_error(self, provider, tmp_path):
+        """400-level API errors raise PermanentProviderError."""
+        audio_path = tmp_path / "test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        from groq import APIStatusError
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_error = APIStatusError(
+            message="Bad request",
+            response=mock_response,
+            body=None,
+        )
+
+        mock_client = MagicMock()
+        mock_transcriptions = MagicMock()
+        mock_transcriptions.create.side_effect = mock_error
+        mock_client.audio = MagicMock()
+        mock_client.audio.transcriptions = mock_transcriptions
+
+        with patch("src.providers.asr.groq_asr.Groq", return_value=mock_client):
+            with pytest.raises(PermanentProviderError) as exc_info:
+                await provider.transcribe(str(audio_path))
+            assert 400 == exc_info.value.status_code
+
+    @pytest.mark.asyncio
+    async def test_transcribe_raises_permanent_on_unknown_error(self, provider, tmp_path):
+        """Non-Groq errors during transcribe are propagated."""
+        audio_path = tmp_path / "test.wav"
+        audio_path.write_bytes(b"fake audio data")
+
+        mock_client = MagicMock()
+        mock_transcriptions = MagicMock()
+        mock_transcriptions.create.side_effect = ConnectionError("Network unreachable")
+        mock_client.audio = MagicMock()
+        mock_client.audio.transcriptions = mock_transcriptions
+
+        with patch("src.providers.asr.groq_asr.Groq", return_value=mock_client):
+            with pytest.raises(ConnectionError):
+                await provider.transcribe(str(audio_path))
+
+    def test_calculate_confidence_empty_words(self, provider):
+        """Returns 1.0 confidence when no words provided."""
+        result = GroqASRProvider._calculate_confidence([])
+        assert result == 1.0
+
+    def test_extract_duration_from_response(self, provider):
+        """Extracts duration from response.duration attribute."""
+        mock_response = MagicMock()
+        mock_response.duration = 42.5
+        mock_response.words = None
+
+        result = GroqASRProvider._extract_duration(mock_response)
+        assert result == 42.5
+
+    def test_extract_duration_from_words_fallback(self, provider):
+        """Falls back to last word end time when duration not available."""
+        mock_word = MagicMock()
+        mock_word.end = 15.5
+
+        mock_response = MagicMock()
+        mock_response.duration = None
+        mock_response.words = [mock_word]
+
+        result = GroqASRProvider._extract_duration(mock_response)
+        assert result == 15.5
+
+    def test_extract_duration_no_data(self, provider):
+        """Returns 0.0 when no duration or words available."""
+        mock_response = MagicMock()
+        mock_response.duration = None
+        mock_response.words = None
+
+        result = GroqASRProvider._extract_duration(mock_response)
+        assert result == 0.0

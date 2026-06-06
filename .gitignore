@@ -221,3 +221,22 @@ __marimo__/
 .checkpoint/
 output/
 *.log
+
+# Generated chapter files
+chapters/
+
+# Temporary video processing files
+*.wav
+*.mp4
+.tmp/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+.mind/
+# macOS
+.DS_Store

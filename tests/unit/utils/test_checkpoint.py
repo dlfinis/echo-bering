@@ -77,3 +77,31 @@ class TestCheckpointManager:
         manager.save("stage", {"version": 2})
         result = manager.load("stage")
         assert result == {"version": 2}
+
+    def test_save_unserializable_data_raises(self, manager):
+        """Raises CheckpointError for unserializable data."""
+        from src.utils.errors import CheckpointError
+
+        class Unserializable:
+            pass
+
+        with pytest.raises(CheckpointError):
+            manager.save("bad_stage", {"obj": Unserializable()})
+
+    def test_load_corrupted_json_raises(self, manager, tmp_path):
+        """Raises CheckpointError for corrupted checkpoint file."""
+        from src.utils.errors import CheckpointError
+
+        # Manually create a corrupted checkpoint file
+        stage_dir = tmp_path / ".checkpoint" / "corrupt_stage"
+        stage_dir.mkdir(parents=True)
+        (stage_dir / "data.json").write_text("{invalid json!!!")
+
+        with pytest.raises(CheckpointError):
+            manager.load("corrupt_stage")
+
+    def test_clear_nonexistent_directory(self, tmp_path):
+        """Clear handles case where checkpoint dir doesn't exist."""
+        manager = CheckpointManager(tmp_path)
+        # Don't save anything, just clear
+        manager.clear()  # Should not raise
