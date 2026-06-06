@@ -51,7 +51,19 @@ DEEPSEEK_API_KEY=tu_deepseek_key_aqui
 # OPENAI_API_KEY=tu_openai_key_aqui        # Opcional
 ```
 
-### 3. Configuración de Prueba
+### 3. Videos de Prueba Disponibles
+
+El proyecto incluye videos de prueba pre-procesados en la carpeta **`sources/`**:
+
+- **`sources/test_1m.mp4`**: Video de 1 minuto 30 segundos (recomendado para pruebas rápidas)
+- **`sources/test_5m.mp4`**: Video de 5 minutos  
+- **`sources/test_full.mp4`**: Video de ~20 minutos (para pruebas de chunking)
+
+Archivos de audio pre-procesados (formato óptimo: 16kHz, mono):
+- **`sources/test_audio_1m.wav`**: Audio de 1 minuto 
+- **`sources/test_audio.wav`**: Audio completo
+
+### 4. Configuración de Prueba
 
 Crear archivo `config.test.yaml` para pruebas:
 
@@ -60,8 +72,8 @@ Crear archivo `config.test.yaml` para pruebas:
 asr_provider: groq
 llm_provider: deepseek
 
-# Video de prueba
-input_video: ./videos/test_short.mp4
+# Video de prueba - usar la carpeta sources/
+input_video: ./sources/test_1m.mp4
 output_dir: ./output_test
 
 # Idioma y procesamiento
@@ -73,52 +85,16 @@ max_budget_usd: 0.50
 chunk_duration_minutes: 10
 ```
 
-## Preparación de Videos de Prueba
+### Verificación de Videos de Prueba
 
-### Videos de Prueba Recomendados
-
-Crear directorio de videos de prueba:
-
-```bash
-mkdir -p videos
-```
-
-#### Opción 1: Video Corto de Prueba (< 1 minuto)
-
-Descargar un video corto para pruebas rápidas:
-
-```bash
-# Ejemplo: descargar un video corto de prueba
-# NOTA: Asegúrate de tener derechos para usar el video
-wget -O videos/test_short.mp4 "https://example.com/short_test_video.mp4"
-
-# O crear un video de prueba con ffmpeg
-ffmpeg -f lavfi -i testsrc=duration=30:size=640x480:rate=30 -f lavfi -i sine=frequency=1000:duration=30 videos/test_short.mp4
-```
-
-#### Opción 2: Video de Audio Limpio
-
-Si solo quieres probar la transcripción:
-
-```bash
-# Crear audio de prueba
-echo "Hola mundo. Este es un video de prueba para Echo-Bering." | text2wave -o test_audio.wav
-ffmpeg -f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 -t 10 -acodec aac -vcodec libx264 -y videos/audio_test.mp4
-```
-
-### Verificación del Video de Prueba
-
-Antes de procesar, verificar que el video es válido:
+Antes de procesar, verificar que los videos son válidos:
 
 ```bash
 # Verificar duración
-ffprobe -v quiet -show_entries format=duration -of csv=p=0 videos/test_short.mp4
+ffprobe -v quiet -show_entries format=duration -of csv=p=0 sources/test_1m.mp4
 
 # Verificar que tiene pista de audio
-ffprobe -v quiet -show_streams videos/test_short.mp4 | grep -A5 "Audio:"
-
-# Reproducir localmente (opcional)
-ffplay videos/test_short.mp4
+ffprobe -v quiet -show_streams sources/test_1m.mp4 | grep -A5 "Audio:"
 ```
 
 ## Pruebas de Funcionalidad Básica
@@ -170,10 +146,10 @@ Ejecutar el pipeline con el video de prueba:
 
 ```bash
 # Ejecutar con modo verbose para ver logs detallados
-uv run python -m src.main --config config.test.yaml --verbose
+GROQ_API_KEY=$(grep GROQ_API_KEY .env | cut -d'=' -f2) DEEPSEEK_API_KEY=$(grep DEEPSEEK_API_KEY .env | cut -d'=' -f2) uv run python -m src.main --config config.test.yaml --verbose
 
 # O ejecutar en background para videos largos
-nohup uv run python -m src.main --config config.test.yaml > pipeline.log 2>&1 &
+nohup GROQ_API_KEY=$(grep GROQ_API_KEY .env | cut -d'=' -f2) DEEPSEEK_API_KEY=$(grep DEEPSEEK_API_KEY .env | cut -d'=' -f2) uv run python -m src.main --config config.test.yaml > pipeline.log 2>&1 &
 ```
 
 ### 4. Verificación de Resultados

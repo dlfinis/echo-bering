@@ -1,9 +1,10 @@
 asr_provider: groq
 asr_model: whisper-large-v3-turbo
 llm_provider: deepseek
-llm_model: deepseek-v4-flash
-input_video: ./sources/test_1m.mp4
+llm_model: deepseek-chat
+input_video: ./videos/test.mp4
 output_dir: ./output_test
 language: es
 cut_mode: fast
-max_budget_usd: 0.50
+max_budget_usd: 0.10
+chunk_duration_minutes: 5

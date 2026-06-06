@@ -195,3 +195,26 @@ class TestPromptTemplateValidation:
             # We only care about variables outside of code blocks/examples
             # For simplicity, just verify the core required vars exist
             pass  # Template validation is done in variable existence tests above
+
+    def test_segmenter_basic_prompt_exists(self, prompt_manager):
+        """Basic segmenter prompt template exists and loads."""
+        template = prompt_manager.load("segmenter-basic.md")
+        assert len(template) > 100
+
+    def test_segmenter_basic_prompt_has_required_variables(self, prompt_manager):
+        """Basic segmenter prompt contains all required template variables."""
+        template = prompt_manager.load("segmenter-basic.md")
+
+        required_vars = [
+            "VIDEO_TITLE",
+            "VIDEO_TOPIC",
+            "VIDEO_TOTAL_DURATION",
+            "FULL_TRANSCRIPT",
+        ]
+
+        missing = []
+        for var in required_vars:
+            if f"{{{{{var}}}}}" not in template:
+                missing.append(var)
+
+        assert not missing, f"Missing variables in segmenter-basic.md: {missing}"

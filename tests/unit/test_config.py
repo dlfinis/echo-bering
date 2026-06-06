@@ -190,3 +190,43 @@ class TestLoadConfig:
         })
         config = load_config(config_path)
         assert output_dir.exists()
+
+    def test_required_asr_features_defaults_to_empty(self, tmp_path):
+        """required_asr_features defaults to empty list."""
+        video = tmp_path / "test.mp4"
+        video.write_text("fake")
+        config_path = self._write_yaml(tmp_path, {
+            "asr_provider": "groq",
+            "llm_provider": "deepseek",
+            "input_video": str(video),
+        })
+        config = load_config(config_path)
+        assert config.required_asr_features == []
+
+    def test_required_asr_features_from_yaml(self, tmp_path):
+        """required_asr_features can be set in YAML."""
+        video = tmp_path / "test.mp4"
+        video.write_text("fake")
+        config_path = self._write_yaml(tmp_path, {
+            "asr_provider": "assemblyai",
+            "llm_provider": "deepseek",
+            "input_video": str(video),
+            "required_asr_features": ["word_timestamps"],
+        })
+        config = load_config(config_path)
+        assert config.required_asr_features == ["word_timestamps"]
+
+    def test_required_asr_features_multiple(self, tmp_path):
+        """Multiple required features can be specified."""
+        video = tmp_path / "test.mp4"
+        video.write_text("fake")
+        config_path = self._write_yaml(tmp_path, {
+            "asr_provider": "assemblyai",
+            "llm_provider": "deepseek",
+            "input_video": str(video),
+            "required_asr_features": ["word_timestamps", "speaker_diarization"],
+        })
+        config = load_config(config_path)
+        assert len(config.required_asr_features) == 2
+        assert "word_timestamps" in config.required_asr_features
+        assert "speaker_diarization" in config.required_asr_features

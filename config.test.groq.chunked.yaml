@@ -1,0 +1,18 @@
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+input_video: ./sources/test_full.mp4
+project_name: test_full_groq_chunked
+output_dir: ./output
+language: es
+cut_mode: fast
+max_budget_usd: 1.0
+preferred_chapters: 5
+
+# Processing optimization for Groq (25MB limit ≈ 12-15 minutes at 16kHz mono)
+chunk_duration_minutes: 12
+chunk_overlap_seconds: 30
+batch_processing: true
+word_timestamps: false  # Groq doesn't support word-level timestamps
+segment_timestamps: true  # Use segment-level timestamps for timing

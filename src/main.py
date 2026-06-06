@@ -9,6 +9,10 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Load environment configuration automatically before any other imports
+from src.utils.env_loader import load_env_config
+load_env_config()
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (

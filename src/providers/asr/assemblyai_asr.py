@@ -5,7 +5,7 @@ from pathlib import Path
 
 import assemblyai as aai
 
-from src.providers.asr.base import ASRProvider, TranscriptResult, WordTimestamp
+from src.providers.asr.base import ASRProvider, ProviderCapabilities, TranscriptResult, WordTimestamp
 from src.utils.errors import PermanentProviderError, TransientProviderError
 from src.utils.logger import get_logger
 from src.utils.retry import RetryPolicy
@@ -14,6 +14,14 @@ logger = get_logger(__name__)
 
 # Default model identifier
 DEFAULT_MODEL = "assemblyai-default"
+
+# AssemblyAI supports word-level timestamps and speaker diarization.
+ASSEMBLYAI_CAPABILITIES = ProviderCapabilities(
+    has_word_timestamps=True,
+    has_speaker_diarization=True,
+    has_utterances=False,  # Not currently enabled in transcribe config
+    max_duration_s=0.0,  # No explicit limit
+)
 
 
 class AssemblyAIASRProvider(ASRProvider):
@@ -40,6 +48,11 @@ class AssemblyAIASRProvider(ASRProvider):
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """AssemblyAI provides rich transcription with word-level timestamps."""
+        return ASSEMBLYAI_CAPABILITIES
 
     def _get_transcriber(self) -> aai.Transcriber:
         """Lazy initialization of the AssemblyAI transcriber."""

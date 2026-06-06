@@ -18,11 +18,12 @@ from src.processors.enricher import MetadataEnricher
 from src.processors.materializer import ChapterMaterializer
 from src.processors.segmenter import ChapterSegmenter, PromptManager
 from src.processors.transcriber import Transcriber
+from src.models.transcription import WordTimestamp
 from src.providers.asr.base import TranscriptResult
 from src.providers.factory import create_asr_provider, create_llm_provider
 from src.utils.checkpoint import CheckpointManager
 from src.utils.cost_estimator import CostEstimator
-from src.utils.errors import BudgetError, ProviderError
+from src.utils.errors import BudgetError, CapabilityError, ProviderError
 from src.utils.logger import get_logger
 from src.utils.progress import (
     PipelineState,
@@ -66,7 +67,7 @@ class StageResult:
         return cls(stage=stage, success=False, error=error)
 
 
-# Re-export for imports from the same module
+from src.orchestrators.utils import _format_duration, generate_project_name
 __all__ = [
     "STAGE_EXTRACT",
     "STAGE_TRANSCRIBE",
@@ -98,9 +99,23 @@ class PipelineOrchestrator:
             progress_callback: Optional callback for progress events.
         """
         self.config = config
+        
+        # Generate project name and set final output directory
+        if config.project_name:
+            project_dir = config.output_dir / config.project_name
+        else:
+            # Get existing projects in output directory
+            existing_projects = set()
+            if config.output_dir.exists():
+                existing_projects = {d.name for d in config.output_dir.iterdir() if d.is_dir()}
+            
+            project_name = generate_project_name(config, existing_projects)
+            project_dir = config.output_dir / project_name
+            
+        self.project_dir = project_dir
         self.progress_callback = progress_callback
         self.cost_estimator = CostEstimator()
-        self.checkpoint_manager = CheckpointManager(config.output_dir)
+        self.checkpoint_manager = CheckpointManager(project_dir)
         self.pipeline_state = PipelineState(total_stages=len(STAGE_ORDER))
 
         # Components (lazily initialized)
@@ -234,7 +249,11 @@ class PipelineOrchestrator:
     async def _execute_transcribe(self) -> StageResult:
         """Execute the transcription stage."""
         try:
-            asr_provider = create_asr_provider(self.config.asr_provider, self.config.asr_model)
+            asr_provider = create_asr_provider(
+                self.config.asr_provider,
+                self.config.asr_model,
+                required_features=self.config.required_asr_features,
+            )
             transcriber = Transcriber(
                 asr_provider=asr_provider,
                 output_dir=self.config.output_dir,
@@ -249,7 +268,7 @@ class PipelineOrchestrator:
                 if extract_data and "audio_path" in extract_data:
                     audio_path = Path(extract_data["audio_path"])
 
-            transcript = await transcriber.transcribe(audio_path)
+            transcript_result = await transcriber.transcribe(audio_path)
 
             self._emit(ProgressEvent(
                 type=ProgressEventType.COST_UPDATE,
@@ -259,16 +278,18 @@ class PipelineOrchestrator:
             ))
 
             # Check transcription confidence threshold
-            if transcript.confidence < self.config.transcription_confidence_threshold:
+            if transcript_result.confidence < self.config.transcription_confidence_threshold:
                 self._emit(ProgressEvent(
                     type=ProgressEventType.WARNING,
                     message=(
-                        f"Transcription confidence {transcript.confidence:.2f} "
+                        f"Transcription confidence {transcript_result.confidence:.2f} "
                         f"< {self.config.transcription_confidence_threshold} — review required"
                     ),
                 ))
 
-            return StageResult.success(STAGE_TRANSCRIBE, data={"transcript": transcript})
+            return StageResult.success(STAGE_TRANSCRIBE, data={"transcript": transcript_result})
+        except CapabilityError:
+            raise
         except Exception as e:
             return StageResult.failure(STAGE_TRANSCRIBE, e)
 
@@ -289,14 +310,42 @@ class PipelineOrchestrator:
                     ProviderError("No transcript checkpoint found — run transcribe stage first"),
                 )
 
-            transcript_text = asr_data.get("text", "")
+            # Reconstruct TranscriptResult object
+            transcript_dict = asr_data.get("transcript", {})
+            if isinstance(transcript_dict, dict):
+                transcript_result = TranscriptResult(**transcript_dict)
+            else:
+                # Handle legacy format (just text)
+                transcript_result = TranscriptResult(
+                    text=str(transcript_dict),
+                    confidence=1.0,
+                    words=[],
+                    segments=[],
+                    duration_s=0.0,
+                    provider="unknown",
+                    model="unknown"
+                )
 
+            # Get ASR provider to access capabilities
+            asr_provider = create_asr_provider(self.config.asr_provider, self.config.asr_model)
+            
             chapters = await segmenter.segment(
-                transcript=transcript_text,
+                transcript=transcript_result,
                 video_title=self.config.input_video.stem,
                 video_topic="",
-                video_total_duration="00:00:00",
+                video_total_duration=_format_duration(transcript_result.duration_s) if transcript_result.duration_s > 0 else "00:00:00",
+                asr_capabilities=asr_provider.capabilities,
             )
+
+            self.checkpoint_manager.save(STAGE_SEGMENT, {"chapters": [c.model_dump() for c in chapters]})
+            logger.info("Segmentation completed successfully with %d chapters", len(chapters))
+            return StageResult.success(STAGE_SEGMENT, data={"chapters": chapters})
+
+        except CapabilityError:
+            raise
+        except Exception as e:
+            logger.exception("Segmentation stage failed")
+            return StageResult.failure(STAGE_SEGMENT, e)
 
             # Check segmentation confidence warnings
             for chapter in chapters:
@@ -369,7 +418,7 @@ class PipelineOrchestrator:
     async def _execute_materialize(self) -> StageResult:
         """Execute the materialization stage."""
         try:
-            materializer = ChapterMaterializer(self.config.output_dir)
+            materializer = ChapterMaterializer(self.project_dir)
 
             # Load chapters from checkpoint (enrich or segment)
             enrich_data = self.checkpoint_manager.load(STAGE_ENRICH)
@@ -378,16 +427,44 @@ class PipelineOrchestrator:
                 chapters = []
                 for c in chapters_data:
                     if "chapter" in c:
-                        # EnrichedChapter format
-                        base = Chapter(**c["chapter"])
+                        # EnrichedChapter format - need to combine chapter + timing data
+                        chapter_base = c["chapter"]
+                        timing_data = c.get("timing", {})
+                        
+                        # Parse time strings to seconds
+                        def parse_time_to_seconds(time_str: str) -> float:
+                            """Convert HH:MM:SS.mmm to seconds."""
+                            if not time_str or time_str == "00:00:00.000":
+                                return 0.0
+                            try:
+                                h, m, s = time_str.split(':')
+                                return int(h) * 3600 + int(m) * 60 + float(s)
+                            except (ValueError, AttributeError):
+                                return 0.0
+                        
+                        start_seconds = parse_time_to_seconds(timing_data.get("start_time", "00:00:00.000"))
+                        end_seconds = parse_time_to_seconds(timing_data.get("end_time", "00:00:00.000"))
+                        
+                        # Create Chapter with all required fields
+                        chapter_obj = Chapter(
+                            number=chapter_base.get("number", 0),
+                            title=chapter_base.get("title", ""),
+                            start_time=timing_data.get("start_time", "00:00:00.000"),
+                            end_time=timing_data.get("end_time", "00:00:00.000"),
+                            start_seconds=start_seconds,
+                            end_seconds=end_seconds,
+                            confidence=c.get("confidence", {}).get("segmentation_score", 0.8),
+                            transcript="",  # Will be filled from original transcript later if needed
+                            needs_review=c.get("confidence", {}).get("needs_review", False)
+                        )
                         chapters.append(EnrichedChapter(
-                            chapter=base,
-                            description=c.get("description", ""),
-                            context=c.get("context", ""),
-                            summary_bullets=c.get("summary_bullets", []),
-                            terms_used=c.get("terms_used", []),
-                            key_concepts=c.get("key_concepts", []),
-                            entities_detected=c.get("entities_detected", {}),
+                            chapter=chapter_obj,
+                            description=c.get("content", {}).get("description", ""),
+                            context=c.get("content", {}).get("context", ""),
+                            summary_bullets=c.get("content", {}).get("summary_bullets", []),
+                            terms_used=c.get("knowledge", {}).get("terms_used", []),
+                            key_concepts=c.get("knowledge", {}).get("key_concepts", []),
+                            entities_detected=c.get("knowledge", {}).get("entities_detected", {}),
                             highlights=c.get("highlights", []),
                             pedagogy=c.get("pedagogy", {}),
                             confidence=c.get("confidence", {}),
@@ -409,8 +486,16 @@ class PipelineOrchestrator:
             words_data = []
             transcript_confidence = 0.0
             if asr_data:
-                words_data = [WordTimestamp(**w) for w in asr_data.get("words", [])]
-                transcript_confidence = asr_data.get("confidence", 0.0)
+                # Handle both direct TranscriptResult and nested format from different providers
+                if "transcript" in asr_data and isinstance(asr_data["transcript"], dict):
+                    # Nested format: {"transcript": {TranscriptResult}}
+                    transcript_dict = asr_data["transcript"]
+                else:
+                    # Direct format: {TranscriptResult}
+                    transcript_dict = asr_data
+                    
+                words_data = [WordTimestamp(**w) for w in transcript_dict.get("words", [])]
+                transcript_confidence = transcript_dict.get("confidence", 0.0)
 
             transcript = TranscriptResult(
                 text="",
@@ -429,10 +514,20 @@ class PipelineOrchestrator:
                     transcript=transcript,
                     source_video=source_video,
                 )
+                # Handle both Chapter and EnrichedChapter objects
+                if hasattr(chapter, 'chapter'):
+                    # EnrichedChapter
+                    chapter_title = chapter.chapter.title
+                    chapter_number = chapter.chapter.number
+                else:
+                    # Chapter
+                    chapter_title = chapter.title
+                    chapter_number = chapter.number
+                    
                 self._emit(ProgressEvent(
                     type=ProgressEventType.CHAPTER_COMPLETE,
-                    chapter_slug=chapter.title.lower().replace(" ", "-"),
-                    chapter_number=chapter.number,
+                    chapter_slug=chapter_title.lower().replace(" ", "-"),
+                    chapter_number=chapter_number,
                     total_chapters=len(chapters),
                 ))
 

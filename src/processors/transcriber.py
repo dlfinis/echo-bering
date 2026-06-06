@@ -26,12 +26,15 @@ logger = get_logger(__name__)
 # Keywords that indicate a provider rejected the file due to duration/size limits
 DURATION_REJECTION_KEYWORDS = [
     "duration exceeded",
-    "duration exceeds",
+    "duration exceeds", 
     "file too large",
     "audio duration",
     "maximum duration",
     "max duration",
     "too long",
+    "request_too_large",
+    "request entity too large",
+    "entity too large",
     "exceeds limit",
     "exceeds maximum",
 ]

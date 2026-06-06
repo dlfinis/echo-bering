@@ -6,7 +6,7 @@ from pathlib import Path
 
 from groq import Groq, APIError, AuthenticationError, RateLimitError
 
-from src.providers.asr.base import ASRProvider, TranscriptResult, WordTimestamp
+from src.providers.asr.base import ASRProvider, ProviderCapabilities, TranscriptResult, WordTimestamp
 from src.utils.errors import PermanentProviderError, TransientProviderError
 from src.utils.logger import get_logger
 from src.utils.retry import RetryPolicy
@@ -18,6 +18,15 @@ MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
 
 # Default model
 DEFAULT_MODEL = "whisper-large-v3-turbo"
+
+# Groq's Whisper endpoint returns text + duration but word-level timestamps
+# are not consistently available despite verbose_json format.
+GROQ_CAPABILITIES = ProviderCapabilities(
+    has_word_timestamps=False,
+    has_speaker_diarization=False,
+    has_utterances=False,
+    max_duration_s=0.0,  # No explicit limit beyond file size
+)
 
 
 class GroqASRProvider(ASRProvider):
@@ -44,6 +53,11 @@ class GroqASRProvider(ASRProvider):
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        """Groq provides basic transcription only (text + duration)."""
+        return GROQ_CAPABILITIES
 
     def _get_client(self) -> Groq:
         """Lazy initialization of the Groq client."""

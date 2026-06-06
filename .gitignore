@@ -221,6 +221,7 @@ __marimo__/
 .checkpoint/
 output/
 *.log
+sources/
 
 # Generated chapter files
 chapters/

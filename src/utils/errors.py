@@ -60,3 +60,31 @@ class CheckpointError(EchoBeringError):
     """Checkpoint read/write error."""
 
     pass
+
+
+class CapabilityError(EchoBeringError):
+    """Provider capability mismatch error.
+
+    Raised when the selected ASR provider does not support a feature
+    required by the current pipeline configuration.
+
+    Attributes:
+        provider: Name of the provider that lacks the capability.
+        missing_feature: Name of the required feature that is unavailable.
+        suggested_providers: List of provider names that do support the feature.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        missing_feature: str,
+        suggested_providers: Optional[List[str]] = None,
+    ):
+        self.provider = provider
+        self.missing_feature = missing_feature
+        self.suggested_providers = suggested_providers or []
+
+        msg = f"Provider '{provider}' does not support '{missing_feature}'"
+        if self.suggested_providers:
+            msg += f". Try one of: {', '.join(self.suggested_providers)}"
+        super().__init__(msg)

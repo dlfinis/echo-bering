@@ -6,7 +6,7 @@ and auto-creation of the output directory.
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -19,19 +19,23 @@ class Config(BaseModel):
     """Pipeline configuration validated at construction time."""
 
     # Provider configuration
-    asr_provider: str = Field(..., pattern="^(groq|assemblyai|openai)$")
+    asr_provider: str = Field(..., pattern="^(groq|assemblyai|openai|mlx-whisper)$")
     asr_model: Optional[str] = None
     llm_provider: str = Field(..., pattern="^(deepseek|groq|openai)$")
     llm_model: Optional[str] = None
 
+    # ASR capability requirements
+    required_asr_features: List[str] = Field(default_factory=list)
+
     # Input/Output
     input_video: Path
     output_dir: Path = Field(default=Path("./output"))
+    project_name: Optional[str] = Field(default=None, description="Nombre del proyecto para subdirectorio")
     language: str = "es"
 
     # Processing
     cut_mode: str = Field(default="fast", pattern="^(fast|precise)$")
-    max_budget_usd: float = Field(default=2.0, gt=0)
+    max_budget_usd: float = Field(default=2.0, ge=0)  # Allow 0 for local processing
     chunk_duration_minutes: int = Field(default=20, gt=0)
     chunk_overlap_seconds: int = Field(default=30, ge=0, lt=60)
 
@@ -103,6 +107,7 @@ def load_config(config_path: Path) -> Config:
         "LANGUAGE": "language",
         "CUT_MODE": "cut_mode",
         "MAX_BUDGET_USD": "max_budget_usd",
+        "REQUIRED_ASR_FEATURES": "required_asr_features",
     }
 
     for env_key, config_key in env_mappings.items():
@@ -113,6 +118,9 @@ def load_config(config_path: Path) -> Config:
                 yaml_data[config_key] = float(env_value)
             elif config_key in ("output_dir", "input_video"):
                 yaml_data[config_key] = Path(env_value)
+            elif config_key == "required_asr_features":
+                # Parse comma-separated list
+                yaml_data[config_key] = [f.strip() for f in env_value.split(",") if f.strip()]
             else:
                 yaml_data[config_key] = env_value
 

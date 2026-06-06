@@ -71,7 +71,7 @@ asr_provider: groq
 llm_provider: deepseek
 
 # Procesamiento
-input_video: ./videos/mi_video.mp4
+input_video: ./sources/test_1m.mp4  # Videos se almacenan en la carpeta sources/
 output_dir: ./output  
 language: es
 cut_mode: fast

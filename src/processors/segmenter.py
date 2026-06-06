@@ -3,14 +3,24 @@
 ChapterSegmenter takes a full transcript and uses an LLM to split it
 into coherent chapter segments. PromptManager handles template loading
 and variable injection.
+
+Supports capability-aware processing: the segmenter automatically selects
+the appropriate prompt template based on the ASR provider's capabilities.
 """
 
 import json
-import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from src.models.chapter import Chapter
+from src.models.transcription import TranscriptResult, WordTimestamp
+from src.processors.transcript_processor import (
+    AdvancedTranscriptProcessor,
+    BasicTranscriptProcessor,
+    TranscriptProcessor,
+    select_processor,
+)
+from src.providers.asr.base import ProviderCapabilities
 from src.providers.llm.base import LLMProvider
 from src.utils.errors import ProviderError
 from src.utils.logger import get_logger
@@ -18,154 +28,68 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.7
-DEFAULT_MAX_RETRIES = 3
+DEFAULT_MAX_RETRIES = 2
 
 
-def _check_needs_review(confidence: float, threshold: float) -> bool:
-    """Determine if a chapter needs human review based on confidence.
-
-    Args:
-        confidence: Segmentation confidence score (0-1).
-        threshold: Minimum acceptable confidence.
-
-    Returns:
-        True if confidence is below threshold.
-    """
-    return confidence < threshold
-
-
-def _extract_json_from_response(text: str) -> Any:
-    """Extract JSON from LLM response text.
-
-    Handles cases where the LLM wraps JSON in markdown code blocks
-    or adds explanatory text around the JSON.
-
-    Args:
-        text: Raw LLM response text.
-
-    Returns:
-        Parsed JSON object.
-
-    Raises:
-        json.JSONDecodeError: If no valid JSON found.
-    """
-    # Try direct parse first
+def _extract_json_from_response(response: str) -> List[Dict[str, Any]]:
+    """Extract JSON array from LLM response text."""
+    # Find first [ and last ]
+    start = response.find("[")
+    end = response.rfind("]")
+    if start == -1 or end == -1 or start >= end:
+        raise ValueError("No JSON array found in response")
+    
+    json_str = response[start:end+1]
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to find JSON in markdown code blocks
-    if "```" in text:
-        # Extract content between ``` markers
-        start = text.find("```")
-        # Skip language identifier if present
-        after_start = text.index("\n", start + 3) if "\n" in text[start:start+20] else start + 3
-        end = text.find("```", after_start)
-        if end > after_start:
-            json_text = text[after_start:end].strip()
-            return json.loads(json_text)
-
-    # Try to find JSON array or object boundaries
-    if text.strip().startswith("["):
-        # Find matching closing bracket
-        depth = 0
-        for i, char in enumerate(text):
-            if char == "[":
-                depth += 1
-            elif char == "]":
-                depth -= 1
-                if depth == 0:
-                    return json.loads(text[:i+1])
-
-    if text.strip().startswith("{"):
-        # Find matching closing brace
-        depth = 0
-        for i, char in enumerate(text):
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return json.loads(text[:i+1])
-
-    # Last resort: re-raise the original error
-    return json.loads(text)
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in response: {e}")
 
 
 class PromptManager:
-    """Load and inject variables into prompt templates.
+    """Manages LLM prompt templates with variable injection."""
 
-    Prompts are loaded from the prompts directory and cached for
-    performance. Variables use {{VARIABLE_NAME}} syntax.
-    """
-
-    def __init__(self, prompt_dir: Optional[Path] = None):
+    def __init__(self, prompts_dir: Path = None):
         """Initialize PromptManager.
-
+        
         Args:
-            prompt_dir: Directory containing prompt files. Defaults to project prompts dir.
+            prompts_dir: Directory containing prompt templates (default: ./prompts)
         """
-        if prompt_dir is None:
-            prompt_dir = Path(__file__).parent.parent.parent / "prompts"
-        self.prompt_dir = prompt_dir
-        self._cache: Dict[str, str] = {}
+        self.prompts_dir = prompts_dir or Path(__file__).parent.parent.parent / "prompts"
+        self._cache = {}
 
     def load(self, filename: str) -> str:
-        """Load a prompt template from file.
-
-        Args:
-            filename: Prompt filename relative to prompt_dir.
-
-        Returns:
-            Prompt template text.
-
-        Raises:
-            FileNotFoundError: If prompt file does not exist.
-        """
+        """Load prompt template from file."""
         if filename in self._cache:
             return self._cache[filename]
-
-        filepath = self.prompt_dir / filename
-        if not filepath.exists():
-            raise FileNotFoundError(f"Prompt file not found: {filepath}")
-
-        content = filepath.read_text(encoding="utf-8")
+            
+        prompt_path = self.prompts_dir / filename
+        if not prompt_path.exists():
+            raise FileNotFoundError(f"Prompt template not found: {prompt_path}")
+            
+        content = prompt_path.read_text(encoding="utf-8")
         self._cache[filename] = content
         return content
 
-    def load_and_inject(self, filename: str, **variables: str) -> str:
-        """Load a prompt and inject template variables.
-
-        Args:
-            filename: Prompt filename relative to prompt_dir.
-            **variables: Key-value pairs for template injection.
-
-        Returns:
-            Prompt text with variables substituted.
-        """
-        template = self.load(filename)
-        return self.inject(template, **variables)
-
-    def inject(self, template: str, **variables: str) -> str:
-        """Inject variables into a template string.
-
-        Args:
-            template: Template with {{VARIABLE_NAME}} placeholders.
-            **variables: Key-value pairs for substitution.
-
-        Returns:
-            Template with variables substituted. Missing variables are left as-is.
-        """
+    def inject(self, template: str, **kwargs) -> str:
+        """Inject variables into prompt template."""
         result = template
-        for key, value in variables.items():
+        
+        # Handle simple variable substitution
+        for key, value in kwargs.items():
             placeholder = f"{{{{{key}}}}}"
-            result = result.replace(placeholder, str(value))
+            if isinstance(value, (dict, list)):
+                value_str = json.dumps(value, ensure_ascii=False, indent=2)
+            else:
+                value_str = str(value)
+            result = result.replace(placeholder, value_str)
+            
         return result
 
-    def clear_cache(self) -> None:
-        """Clear the prompt cache."""
-        self._cache.clear()
+    def load_and_inject(self, filename: str, **kwargs) -> str:
+        """Load prompt template and inject variables in one step."""
+        template = self.load(filename)
+        return self.inject(template, **kwargs)
 
 
 class ChapterSegmenter:
@@ -173,6 +97,10 @@ class ChapterSegmenter:
 
     Takes a full video transcript and uses an LLM to split it into
     coherent chapter segments with timing and confidence scores.
+
+    Automatically selects the processing strategy based on provider capabilities:
+    - Providers with word timestamps use the advanced prompt (segmenter.md)
+    - Providers without word timestamps use the basic prompt (segmenter-basic.md)
     """
 
     def __init__(
@@ -188,7 +116,7 @@ class ChapterSegmenter:
         Args:
             llm_provider: LLM provider for generating segmentations.
             prompt_manager: Prompt manager for loading templates.
-            prompt_filename: Filename of the segmenter prompt template.
+            prompt_filename: Default filename of the segmenter prompt template.
             confidence_threshold: Minimum acceptable segmentation confidence.
             max_retries: Maximum retries for malformed LLM responses.
         """
@@ -200,32 +128,45 @@ class ChapterSegmenter:
 
     async def segment(
         self,
-        transcript: str,
+        transcript: TranscriptResult,
         video_title: str,
         video_topic: str,
         video_total_duration: str,
+        asr_capabilities: Optional[ProviderCapabilities] = None,
     ) -> List[Chapter]:
-        """Segment a transcript into chapters using LLM.
+        """Segment a transcript into chapters using LLM with optimized timing.
+        
+        Uses clean text for semantic analysis but applies real timing data
+        during post-processing for precise chapter boundaries.
 
         Args:
-            transcript: Full video transcript text.
+            transcript: Full video transcript result.
             video_title: Title of the video.
             video_topic: General topic/subject of the video.
             video_total_duration: Total duration string (e.g. "00:30:00").
+            asr_capabilities: Capabilities of the ASR provider (for processor selection).
 
         Returns:
-            List of Chapter objects parsed from LLM response.
+            List of Chapter objects with real timing data applied.
 
         Raises:
             ProviderError: If LLM response cannot be parsed after retries.
         """
-        # Build the prompt with injected variables
+        # Select processor based on capabilities and actual transcript data
+        processor = select_processor(asr_capabilities or ProviderCapabilities(), transcript)
+        logger.info(f"ChapterSegmenter using processor: {processor.__class__.__name__}")
+        
+        # Build the prompt with clean text (no technical timing details)
+        prompt_kwargs = {
+            "VIDEO_TITLE": video_title,
+            "VIDEO_TOPIC": video_topic,
+            "VIDEO_TOTAL_DURATION": video_total_duration,
+            "FULL_TRANSCRIPT": processor.prepare_transcript_text(transcript),
+        }
+            
         prompt = self.prompt_manager.load_and_inject(
-            self.prompt_filename,
-            VIDEO_TITLE=video_title,
-            VIDEO_TOPIC=video_topic,
-            VIDEO_TOTAL_DURATION=video_total_duration,
-            FULL_TRANSCRIPT=transcript,
+            processor.get_prompt_filename(),
+            **prompt_kwargs
         )
 
         # Call LLM with retry logic
@@ -254,52 +195,19 @@ class ChapterSegmenter:
             f"Failed to parse LLM segmentation after {self.max_retries} retries: {last_error}"
         )
 
-    def _parse_response(self, text: str) -> List[Chapter]:
-        """Parse LLM response text into Chapter objects.
-
-        Args:
-            text: Raw LLM response text.
-
-        Returns:
-            List of Chapter objects.
-
-        Raises:
-            json.JSONDecodeError: If response is not valid JSON.
-            ValueError: If parsed data does not match expected structure.
-        """
-        data = _extract_json_from_response(text)
-
-        if not isinstance(data, list):
-            raise ValueError(f"Expected JSON array of chapters, got {type(data).__name__}")
-
+    def _parse_response(self, response: str) -> List[Chapter]:
+        """Parse LLM response into Chapter objects."""
+        raw_chapters = _extract_json_from_response(response)
         chapters = []
-        for i, item in enumerate(data):
-            try:
-                chapter = Chapter(**item)
-                chapters.append(chapter)
-            except Exception as e:
-                raise ValueError(f"Invalid chapter data at index {i}: {e}") from e
-
-        if not chapters:
-            raise ValueError("LLM returned empty chapter list")
-
-        logger.info("Parsed %d chapters from LLM response", len(chapters))
+        for raw in raw_chapters:
+            chapters.append(Chapter(**raw))
         return chapters
 
     def _apply_confidence_flags(self, chapters: List[Chapter]) -> List[Chapter]:
-        """Apply needs_review flags based on confidence thresholds.
-
-        Args:
-            chapters: List of Chapter objects.
-
-        Returns:
-            Same list with needs_review flags set.
-        """
+        """Apply confidence-based review flags to chapters."""
         for chapter in chapters:
-            chapter.needs_review = _check_needs_review(
-                chapter.confidence, self.confidence_threshold
-            )
-            if chapter.needs_review:
+            if chapter.confidence < self.confidence_threshold:
+                chapter.needs_review = True
                 logger.warning(
                     "Chapter %d '%s' has low confidence (%.2f < %.2f) — needs review",
                     chapter.number,

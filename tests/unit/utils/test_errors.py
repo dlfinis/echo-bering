@@ -2,6 +2,7 @@
 
 import pytest
 from src.utils.errors import (
+    CapabilityError,
     EchoBeringError,
     ConfigError,
     DependencyError,
@@ -125,3 +126,58 @@ class TestCheckpointError:
     def test_checkpoint_error_message(self):
         err = CheckpointError("failed to read stage data")
         assert str(err) == "failed to read stage data"
+
+
+class TestCapabilityError:
+    """Test CapabilityError for provider capability mismatches."""
+
+    def test_capability_error_is_echo_bering_error(self):
+        """CapabilityError inherits from EchoBeringError."""
+        assert issubclass(CapabilityError, EchoBeringError)
+
+    def test_capability_error_basic_message(self):
+        """Basic message includes provider and missing feature."""
+        err = CapabilityError(
+            provider="groq",
+            missing_feature="word_timestamps",
+        )
+        assert "groq" in str(err)
+        assert "word_timestamps" in str(err)
+
+    def test_capability_error_with_suggestions(self):
+        """Message includes suggested providers when available."""
+        err = CapabilityError(
+            provider="groq",
+            missing_feature="word_timestamps",
+            suggested_providers=["assemblyai"],
+        )
+        assert "assemblyai" in str(err)
+
+    def test_capability_error_without_suggestions(self):
+        """Works fine without suggested providers."""
+        err = CapabilityError(
+            provider="groq",
+            missing_feature="word_timestamps",
+        )
+        assert err.suggested_providers == []
+
+    def test_capability_error_attributes(self):
+        """Attributes are stored correctly."""
+        err = CapabilityError(
+            provider="openai",
+            missing_feature="speaker_diarization",
+            suggested_providers=["assemblyai"],
+        )
+        assert err.provider == "openai"
+        assert err.missing_feature == "speaker_diarization"
+        assert err.suggested_providers == ["assemblyai"]
+
+    def test_capability_error_multiple_suggestions(self):
+        """Multiple suggested providers are listed."""
+        err = CapabilityError(
+            provider="groq",
+            missing_feature="word_timestamps",
+            suggested_providers=["assemblyai", "openai-pro"],
+        )
+        assert "assemblyai" in str(err)
+        assert "openai-pro" in str(err)

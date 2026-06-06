@@ -5,20 +5,25 @@ and video clips. Uses ffmpeg fast cut (stream copy) for video extraction.
 """
 
 import json
+from pathlib import Path
 import shutil
 import subprocess
-from pathlib import Path
+from typing import List
+
+from src.models.transcription import WordTimestamp
+from src.providers.asr.base import TranscriptResult
+from src.orchestrators.utils import slugify
 from typing import List, Optional, Tuple, Union
 
 from src.models.chapter import Chapter, EnrichedChapter
-from src.providers.asr.base import TranscriptResult, WordTimestamp
+from src.providers.asr.base import TranscriptResult
 from src.utils.errors import DependencyError
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 # Seconds gap between words to start a new SRT entry
-_SRT_GAP_THRESHOLD = 2.0
+_SRT_GAP_THRESHOLD = 0.5  # seconds between words to create new SRT entry
 
 
 def _format_srt_timestamp(seconds: float) -> str:
@@ -40,40 +45,81 @@ def _format_srt_timestamp(seconds: float) -> str:
 def _group_words_into_entries(
     words: List[WordTimestamp],
     gap_threshold: float = _SRT_GAP_THRESHOLD,
+    max_words_per_entry: int = 25,
+    sentence_endings: set = None,
 ) -> List[Tuple[float, float, str]]:
-    """Group word timestamps into SRT entries based on time gaps.
-
-    Words within gap_threshold seconds of each other are grouped into
-    a single SRT entry.
-
+    """Group word timestamps into SRT entries based on time gaps and sentence structure.
+    
+    Creates entries that respect natural sentence boundaries while avoiding
+    overly long subtitles. Uses punctuation and word count heuristics.
+    
     Args:
         words: List of word-level timestamps.
-        gap_threshold: Max seconds between words to group them.
-
+        gap_threshold: Max seconds between words to consider them part of same entry.
+        max_words_per_entry: Maximum words per SRT entry to avoid overcrowding.
+        sentence_endings: Punctuation marks that indicate sentence endings.
+        
     Returns:
         List of (start, end, text) tuples for SRT entries.
     """
     if not words:
         return []
-
+    
+    if sentence_endings is None:
+        sentence_endings = {".", "!", "?", "...", ":", ";"}
+    
     entries: List[Tuple[float, float, str]] = []
-    current_words: List[str] = [words[0].word]
+    current_words: List[str] = []
     current_start = words[0].start
     current_end = words[0].end
-
-    for word in words[1:]:
-        if word.start - current_end > gap_threshold:
-            # Gap detected — finalize current entry
-            entries.append((current_start, current_end, " ".join(current_words)))
-            current_words = [word.word]
-            current_start = word.start
-            current_end = word.end
-        else:
-            current_words.append(word.word)
-            current_end = word.end
-
-    # Finalize last entry
-    entries.append((current_start, current_end, " ".join(current_words)))
+    
+    for i, word in enumerate(words):
+        # Add current word
+        current_words.append(word.word)
+        current_end = word.end
+        
+        # Check if we should split here
+        should_split = False
+        
+        # Split on sentence endings
+        if any(ending in word.word for ending in sentence_endings):
+            should_split = True
+            
+        # Split if we've reached max words
+        if len(current_words) >= max_words_per_entry:
+            should_split = True
+            
+        # Split on large time gaps
+        if i < len(words) - 1:  # Not the last word
+            next_word = words[i + 1]
+            if next_word.start - word.end > gap_threshold:
+                should_split = True
+                
+        # Create new entry if needed
+        if should_split and current_words:
+            # Clean up the text
+            text = " ".join(current_words)
+            # Remove extra spaces around punctuation
+            text = text.replace(" .", ".").replace(" ,", ",").replace(" ?", "?").replace(" !", "!")
+            text = text.strip()
+            
+            if text:  # Only add non-empty entries
+                entries.append((current_start, current_end, text))
+            
+            # Reset for next entry
+            if i < len(words) - 1:
+                current_words = []
+                current_start = words[i + 1].start
+                current_end = words[i + 1].end
+    
+    # Handle remaining words
+    if current_words:
+        text = " ".join(current_words)
+        text = text.replace(" .", ".").replace(" ,", ",").replace(" ?", "?").replace(" !", "!")
+        text = text.strip()
+        if text:
+            entries.append((current_start, current_end, text))
+    
     return entries
 
 
@@ -147,7 +193,7 @@ class ChapterMaterializer:
             summary = base_chapter.transcript
 
         # Generate slug from title
-        slug = base_chapter.title.lower().replace(" ", "-")
+        slug = slugify(base_chapter.title)
 
         metadata = {
             "title": base_chapter.title,
@@ -252,12 +298,19 @@ class ChapterMaterializer:
             base_chapter = chapter
             topics = []
 
-        slug = base_chapter.title.lower().replace(" ", "-")
+        slug = slugify(base_chapter.title)
         chapter_dir = self.chapters_dir / slug
         chapter_dir.mkdir(parents=True, exist_ok=True)
 
+        # Filter words to only those within the chapter's time range
+        chapter_words = []
+        for word in transcript.words:
+            # Include words that overlap with the chapter time range
+            if word.end >= base_chapter.start_seconds and word.start <= base_chapter.end_seconds:
+                chapter_words.append(word)
+        
         # 1. Write SRT subtitles
-        srt_content = self.generate_srt(transcript.words)
+        srt_content = self.generate_srt(chapter_words)
         srt_path = chapter_dir / f"{slug}.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(srt_content)

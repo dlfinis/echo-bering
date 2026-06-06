@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from src.factories.provider_factory import ProviderFactory
-from src.providers.asr.base import ASRProvider
+from src.providers.asr.base import ASRProvider, ProviderCapabilities
 from src.providers.asr.groq_asr import GroqASRProvider
 from src.providers.asr.assemblyai_asr import AssemblyAIASRProvider
 from src.providers.asr.openai_asr import OpenAIASRProvider
@@ -31,6 +31,10 @@ class TestProviderFactoryPermanentProviderError:
 
             async def supports_file(self, audio_path: str) -> bool:
                 return False
+
+            @property
+            def capabilities(self) -> ProviderCapabilities:
+                return ProviderCapabilities()
 
         ProviderFactory.register_asr("failing_asr", lambda **kwargs: FailingASR(**kwargs))
 
@@ -172,6 +176,10 @@ class TestProviderFactoryRegistry:
 
             async def supports_file(self, audio_path: str) -> bool:
                 return False
+
+            @property
+            def capabilities(self) -> ProviderCapabilities:
+                return ProviderCapabilities()
 
         ProviderFactory.register_asr("custom", lambda **kwargs: CustomASR())
         providers = ProviderFactory.list_asr_providers()

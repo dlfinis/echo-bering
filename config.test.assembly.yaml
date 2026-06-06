@@ -1,0 +1,16 @@
+asr_provider: assemblyai
+asr_model: universal-2
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+input_video: ./sources/test_1m.mp4
+output_dir: ./output_test_assembly
+language: es
+cut_mode: fast
+max_budget_usd: 0.50
+chunk_duration_minutes: 5
+
+# AssemblyAI features (optional)
+assemblyai_features:
+  speaker_diarization: true
+  entity_detection: true
+  key_phrases: true
