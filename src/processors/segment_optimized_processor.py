@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional
 import logging
 
 from src.models.chapter import Chapter
+from src.processors.transcript_preprocessor import preprocess_transcript
 from src.providers.asr.base import TranscriptResult
 from src.processors.transcript_processor import TranscriptProcessor, _format_duration
 
@@ -37,8 +38,9 @@ class SegmentOptimizedProcessor(TranscriptProcessor):
         
         The LLM should focus on semantic content, not technical timing details.
         Real timing will be applied during post-processing.
+        Preprocessing cleans unicode and removes repetitions.
         """
-        return transcript.text
+        return preprocess_transcript(transcript.text)
 
     def get_total_duration_str(self, transcript: TranscriptResult) -> str:
         """Format total duration from transcript metadata."""

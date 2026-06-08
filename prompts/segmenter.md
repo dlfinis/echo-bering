@@ -69,6 +69,8 @@ El JSON debe ser válido, sin comentarios, sin markdown, sin texto adicional fue
    - Cada capítulo debe incluir su transcripción completa
    - No omitir contenido entre capítulos
    - El transcript debe ser exactamente lo dicho por el instructor
+   - NO agregues frases introductorias como "En este capítulo el instructor dice..." o "Este capítulo trata sobre..."
+   - NO resumas ni comentes el contenido, solo incluye la transcripción textual
 
 5. **FORMATO**:
    - SOLO JSON array, sin ```json``` markdown wrapper

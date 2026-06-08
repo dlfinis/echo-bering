@@ -194,8 +194,13 @@ class PipelineOrchestrator:
                 ))
                 return StageResult.failure(stage_name, e)
 
-        # Clean up checkpoints on success
-        self.checkpoint_manager.clear()
+        # Clean up checkpoints on success if not keeping them
+        if not self.config.keep_checkpoints:
+            self.checkpoint_manager.clear()
+            logger.debug("Checkpoints cleared (keep_checkpoints=False)")
+        else:
+            logger.debug("Checkpoints preserved for debugging (keep_checkpoints=True)")
+        
         logger.info("Pipeline completed successfully")
 
         return StageResult.success(STAGE_MATERIALIZE, data={"output_dir": str(self.config.output_dir)})
@@ -233,7 +238,7 @@ class PipelineOrchestrator:
     async def _execute_extract(self) -> StageResult:
         """Execute the audio extraction stage."""
         try:
-            extractor = AudioExtractor(self.config.output_dir)
+            extractor = AudioExtractor(self.project_dir)
             audio_path = extractor.extract(str(self.config.input_video))
 
             self._emit(ProgressEvent(
@@ -261,7 +266,7 @@ class PipelineOrchestrator:
             )
             
             # Find audio path from checkpoint or default
-            audio_path = self.config.output_dir / ".checkpoint" / "audio" / "audio.wav"
+            audio_path = self.project_dir / ".checkpoint" / "audio" / "audio.wav"
             if not audio_path.exists():
                 # Try extract stage checkpoint
                 extract_data = self.checkpoint_manager.load(STAGE_EXTRACT)
@@ -286,7 +291,7 @@ class PipelineOrchestrator:
                 
                 transcriber = Transcriber(
                     asr_provider=asr_provider,
-                    output_dir=self.config.output_dir,
+                    output_dir=self.project_dir,
                     cost_estimator=self.cost_estimator,
                     chunking_strategy=chunking_strategy,
                 )
@@ -295,7 +300,7 @@ class PipelineOrchestrator:
                 logger.info("Standard video detected, using normal processing: %s", audio_path)
                 transcriber = Transcriber(
                     asr_provider=asr_provider,
-                    output_dir=self.config.output_dir,
+                    output_dir=self.project_dir,
                     cost_estimator=self.cost_estimator,
                 )
 
@@ -553,6 +558,15 @@ class PipelineOrchestrator:
         try:
             materializer = ChapterMaterializer(self.project_dir)
 
+            # Load segment data first to get transcripts
+            segment_data = self.checkpoint_manager.load(STAGE_SEGMENT)
+            segment_transcripts = {}
+            if segment_data:
+                for c in segment_data.get("chapters", []):
+                    chapter_num = c.get("number")
+                    if chapter_num is not None:
+                        segment_transcripts[chapter_num] = c.get("transcript", "")
+
             # Load chapters from checkpoint (enrich or segment)
             enrich_data = self.checkpoint_manager.load(STAGE_ENRICH)
             if enrich_data:
@@ -578,16 +592,20 @@ class PipelineOrchestrator:
                         start_seconds = parse_time_to_seconds(timing_data.get("start_time", "00:00:00.000"))
                         end_seconds = parse_time_to_seconds(timing_data.get("end_time", "00:00:00.000"))
                         
+                        # Get transcript from segment data
+                        chapter_num = chapter_base.get("number", 0)
+                        transcript_text = segment_transcripts.get(chapter_num, "")
+                        
                         # Create Chapter with all required fields
                         chapter_obj = Chapter(
-                            number=chapter_base.get("number", 0),
+                            number=chapter_num,
                             title=chapter_base.get("title", ""),
                             start_time=timing_data.get("start_time", "00:00:00.000"),
                             end_time=timing_data.get("end_time", "00:00:00.000"),
                             start_seconds=start_seconds,
                             end_seconds=end_seconds,
                             confidence=c.get("confidence", {}).get("segmentation_score", 0.8),
-                            transcript="",  # Will be filled from original transcript later if needed
+                            transcript=transcript_text,  # Fill from segment checkpoint
                             needs_review=c.get("confidence", {}).get("needs_review", False)
                         )
                         chapters.append(EnrichedChapter(
@@ -605,7 +623,6 @@ class PipelineOrchestrator:
                     else:
                         chapters.append(Chapter(**c))
             else:
-                segment_data = self.checkpoint_manager.load(STAGE_SEGMENT)
                 if segment_data is None:
                     return StageResult.failure(
                         STAGE_MATERIALIZE,
@@ -680,8 +697,8 @@ class PipelineOrchestrator:
         for i, stage_name in enumerate(STAGE_ORDER):
             if not self.checkpoint_manager.exists(stage_name):
                 return i
-        # All stages have checkpoints — restart from beginning
-        return 0
+        # All stages have checkpoints — pipeline already completed
+        return len(STAGE_ORDER)
 
     @staticmethod
     def _serialize_data(data: Dict[str, Any]) -> Dict[str, Any]:

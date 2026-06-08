@@ -162,6 +162,60 @@ class ChapterMaterializer:
 
         return "\n".join(lines)
 
+    def _generate_srt_from_text(
+        self,
+        text: str,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> str:
+        """Generate SRT content from plain text without word timestamps.
+
+        Splits text into chunks and distributes them proportionally across
+        the chapter's time range.
+
+        Args:
+            text: Chapter transcript text.
+            start_seconds: Chapter start time in seconds.
+            end_seconds: Chapter end time in seconds.
+
+        Returns:
+            SRT file content as string.
+        """
+        if not text:
+            return ""
+
+        # Split text into sentences (rough heuristic)
+        sentences = []
+        current = []
+        for char in text:
+            current.append(char)
+            if char in '.!?' and len(current) > 10:
+                sentences.append(''.join(current).strip())
+                current = []
+        if current:
+            sentences.append(''.join(current).strip())
+
+        # Filter out empty sentences
+        sentences = [s for s in sentences if s]
+
+        if not sentences:
+            return ""
+
+        # Distribute sentences across the time range
+        duration = end_seconds - start_seconds
+        time_per_sentence = duration / len(sentences)
+
+        lines = []
+        for i, sentence in enumerate(sentences, 1):
+            sent_start = start_seconds + (i - 1) * time_per_sentence
+            sent_end = start_seconds + i * time_per_sentence
+            lines.append(str(i))
+            lines.append(f"{_format_srt_timestamp(sent_start)} --> {_format_srt_timestamp(sent_end)}")
+            lines.append(sentence)
+            lines.append("")  # blank line separator
+
+        return "\n".join(lines)
+
     def write_metadata(
         self,
         chapter: Union[Chapter, EnrichedChapter],
@@ -310,7 +364,22 @@ class ChapterMaterializer:
                 chapter_words.append(word)
         
         # 1. Write SRT subtitles
-        srt_content = self.generate_srt(chapter_words)
+        # If we have word-level timestamps, generate precise SRT
+        # Otherwise, generate a simple SRT with the chapter transcript
+        if chapter_words:
+            logger.info("Generating SRT from %d word-level timestamps", len(chapter_words))
+            srt_content = self.generate_srt(chapter_words)
+        else:
+            # Fallback: Generate SRT from chapter transcript text
+            logger.info("No word-level timestamps, generating SRT from chapter transcript text")
+            logger.info("Chapter transcript length: %d characters", len(base_chapter.transcript))
+            srt_content = self._generate_srt_from_text(
+                base_chapter.transcript,
+                base_chapter.start_seconds,
+                base_chapter.end_seconds
+            )
+            logger.info("Generated SRT content length: %d characters", len(srt_content))
+        
         srt_path = chapter_dir / f"{slug}.srt"
         with open(srt_path, "w", encoding="utf-8") as f:
             f.write(srt_content)

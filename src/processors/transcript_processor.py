@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional
 
 from src.models.chapter import Chapter
+from src.processors.transcript_preprocessor import preprocess_transcript
 from src.providers.asr.base import ProviderCapabilities, TranscriptResult
 
 
@@ -67,13 +68,51 @@ class BasicTranscriptProcessor(TranscriptProcessor):
 
     Uses the full transcript text and total duration.
     The LLM must estimate chapter boundaries from text structure.
+    
+    DEPRECATED: Use CleanTranscriptProcessor instead.
     """
 
     def get_prompt_filename(self) -> str:
         return "segmenter-basic.md"
 
     def prepare_transcript_text(self, transcript: TranscriptResult) -> str:
-        """Return the plain transcript text without timestamp annotations."""
+        """Return the plain transcript text without timestamp annotations.
+        
+        Applies preprocessing to clean unicode characters and remove
+        repetitions before sending to the LLM.
+        """
+        return preprocess_transcript(transcript.text)
+
+    def get_total_duration_str(self, transcript: TranscriptResult) -> str:
+        """Format the total duration from the transcript metadata."""
+        return _format_duration(transcript.duration_s) if transcript.duration_s > 0 else "00:00:00.000"
+
+
+class CleanTranscriptProcessor(TranscriptProcessor):
+    """Advanced processor that cleans transcripts before processing.
+    
+    Applies full preprocessing pipeline including:
+    - Unicode normalization (¡, ¿, í, é, etc.)
+    - ASR marker removal (aplausos, risas, música, etc.)
+    - Filler word removal (um, eh, este, etc.)
+    - Repetition reduction
+    - Punctuation normalization
+    
+    This processor should be used for all production pipelines.
+    
+    NOTE: This processor assumes the transcript has already been preprocessed
+    by the transcriber. It only applies light normalization for safety.
+    """
+
+    def get_prompt_filename(self) -> str:
+        return "segmenter-basic.md"
+
+    def prepare_transcript_text(self, transcript: TranscriptResult) -> str:
+        """Return transcript text (already preprocessed by transcriber).
+        
+        Since the transcriber already applies preprocessing, this processor
+        only returns the text as-is to avoid double processing.
+        """
         return transcript.text
 
     def get_total_duration_str(self, transcript: TranscriptResult) -> str:
@@ -92,12 +131,13 @@ class AdvancedTranscriptProcessor(TranscriptProcessor):
         return "segmenter.md"
 
     def prepare_transcript_text(self, transcript: TranscriptResult) -> str:
-        """Return the transcript text as-is.
-
+        """Return the transcript text with preprocessing applied.
+        
         The advanced prompt is designed to work with plain text.
         Word timestamps are available for post-processing if needed.
+        Preprocessing cleans unicode and removes repetitions.
         """
-        return transcript.text
+        return preprocess_transcript(transcript.text)
 
     def get_total_duration_str(self, transcript: TranscriptResult) -> str:
         """Format the total duration from the transcript metadata."""
@@ -123,5 +163,5 @@ def select_processor(capabilities: ProviderCapabilities, transcript: Optional[Tr
     if capabilities.has_word_timestamps:
         return AdvancedTranscriptProcessor()
     
-    # Fallback to basic processor
-    return BasicTranscriptProcessor()
+    # Default: Use clean processor with full preprocessing
+    return CleanTranscriptProcessor()

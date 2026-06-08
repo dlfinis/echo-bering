@@ -55,6 +55,9 @@ class Config(BaseModel):
     generate_summaries: bool = True
     generate_highlights: bool = True
     generate_index: bool = False
+    
+    # Checkpoint management
+    keep_checkpoints: bool = Field(default=True, description="Keep checkpoints after successful pipeline completion for debugging")
 
     @field_validator("input_video")
     @classmethod

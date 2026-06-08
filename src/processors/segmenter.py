@@ -17,6 +17,7 @@ from src.models.transcription import TranscriptResult, WordTimestamp
 from src.processors.transcript_processor import (
     AdvancedTranscriptProcessor,
     BasicTranscriptProcessor,
+    CleanTranscriptProcessor,
     TranscriptProcessor,
     select_processor,
 )
@@ -167,12 +168,17 @@ class ChapterSegmenter:
         processor = select_processor(asr_capabilities or ProviderCapabilities(), transcript)
         logger.info(f"ChapterSegmenter using processor: {processor.__class__.__name__}")
         
+        # Prepare the transcript text (applies preprocessing)
+        prepared_text = processor.prepare_transcript_text(transcript)
+        logger.info(f"Prepared transcript length: {len(prepared_text)} characters")
+        logger.info(f"First 200 chars of prepared text: {prepared_text[:200]}")
+        
         # Build the prompt with clean text (no technical timing details)
         prompt_kwargs = {
             "VIDEO_TITLE": video_title,
             "VIDEO_TOPIC": video_topic,
             "VIDEO_TOTAL_DURATION": video_total_duration,
-            "FULL_TRANSCRIPT": processor.prepare_transcript_text(transcript),
+            "FULL_TRANSCRIPT": prepared_text,
         }
             
         prompt = self.prompt_manager.load_and_inject(

@@ -209,19 +209,48 @@ class Transcriber:
         return merged
 
     def _save_checkpoint(self, result: TranscriptResult) -> None:
-        """Save transcription result to checkpoint.
+        """Save transcription result to checkpoint with preprocessing.
+        
+        Applies preprocessing to clean the transcript before saving:
+        - Unicode normalization (¡, ¿, í, é, etc.)
+        - ASR marker removal (aplausos, risas, música, etc.)
+        - Filler word removal (um, eh, este, etc.)
+        - Repetition reduction
+        - Punctuation normalization
 
         Args:
             result: The transcript result to save.
         """
+        from src.processors.transcript_preprocessor import preprocess_transcript
+        
         checkpoint_dir = self.output_dir / ".checkpoint" / "asr"
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint_path = checkpoint_dir / "raw_transcript.json"
 
-        with open(checkpoint_path, "w", encoding="utf-8") as f:
-            json.dump(result.model_dump(), f, indent=2)
+        # Apply preprocessing to clean the transcript
+        original_text = result.text
+        cleaned_text = preprocess_transcript(original_text, remove_fillers=True)
+        
+        logger.info(f"Original transcript length: {len(original_text)} characters")
+        logger.info(f"Cleaned transcript length: {len(cleaned_text)} characters")
+        logger.info(f"First 200 chars of original: {original_text[:200]}")
+        logger.info(f"First 200 chars of cleaned: {cleaned_text[:200]}")
+        
+        # Create a new TranscriptResult with cleaned text
+        cleaned_result = TranscriptResult(
+            text=cleaned_text,
+            confidence=result.confidence,
+            words=result.words,
+            segments=result.segments,
+            duration_s=result.duration_s,
+            provider=result.provider,
+            model=result.model,
+        )
 
-        logger.info("ASR checkpoint saved: %s", checkpoint_path)
+        with open(checkpoint_path, "w", encoding="utf-8") as f:
+            json.dump(cleaned_result.model_dump(), f, indent=2, ensure_ascii=False)
+
+        logger.info("ASR checkpoint saved (preprocessed): %s", checkpoint_path)
 
     def _get_audio_duration(self, audio_path: Path) -> float:
         """Get audio duration using ffprobe.
