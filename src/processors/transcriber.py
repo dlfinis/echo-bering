@@ -116,8 +116,10 @@ class Transcriber:
         try:
             result = await self._transcribe_with_retry(audio_path)
             logger.info("Full audio transcription succeeded")
-            self._save_checkpoint(result)
-            return result
+            # Apply preprocessing before saving and returning
+            cleaned_result = self._preprocess_transcript(result)
+            self._save_checkpoint(cleaned_result)
+            return cleaned_result
         except ProviderError as e:
             if is_duration_rejection(e):
                 logger.info("Full audio rejected by provider — falling back to chunking")
@@ -205,13 +207,15 @@ class Transcriber:
         logger.info("Chunk transcription reassembled: %.1fs, confidence=%.2f",
                     merged.duration_s, merged.confidence)
 
-        self._save_checkpoint(merged)
-        return merged
+        # Apply preprocessing before saving and returning
+        cleaned_result = self._preprocess_transcript(merged)
+        self._save_checkpoint(cleaned_result)
+        return cleaned_result
 
-    def _save_checkpoint(self, result: TranscriptResult) -> None:
-        """Save transcription result to checkpoint with preprocessing.
+    def _preprocess_transcript(self, result: TranscriptResult) -> TranscriptResult:
+        """Apply preprocessing to clean the transcript.
         
-        Applies preprocessing to clean the transcript before saving:
+        Applies preprocessing to clean the transcript:
         - Unicode normalization (¡, ¿, í, é, etc.)
         - ASR marker removal (aplausos, risas, música, etc.)
         - Filler word removal (um, eh, este, etc.)
@@ -219,15 +223,13 @@ class Transcriber:
         - Punctuation normalization
 
         Args:
-            result: The transcript result to save.
+            result: The transcript result to preprocess.
+            
+        Returns:
+            TranscriptResult with cleaned text.
         """
         from src.processors.transcript_preprocessor import preprocess_transcript
         
-        checkpoint_dir = self.output_dir / ".checkpoint" / "asr"
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        checkpoint_path = checkpoint_dir / "raw_transcript.json"
-
-        # Apply preprocessing to clean the transcript
         original_text = result.text
         cleaned_text = preprocess_transcript(original_text, remove_fillers=True)
         
@@ -236,8 +238,7 @@ class Transcriber:
         logger.info(f"First 200 chars of original: {original_text[:200]}")
         logger.info(f"First 200 chars of cleaned: {cleaned_text[:200]}")
         
-        # Create a new TranscriptResult with cleaned text
-        cleaned_result = TranscriptResult(
+        return TranscriptResult(
             text=cleaned_text,
             confidence=result.confidence,
             words=result.words,
@@ -247,8 +248,20 @@ class Transcriber:
             model=result.model,
         )
 
+    def _save_checkpoint(self, result: TranscriptResult) -> None:
+        """Save transcription result to checkpoint.
+        
+        The transcript should already be preprocessed before calling this method.
+
+        Args:
+            result: The preprocessed transcript result to save.
+        """
+        checkpoint_dir = self.output_dir / ".checkpoint" / "asr"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_path = checkpoint_dir / "raw_transcript.json"
+
         with open(checkpoint_path, "w", encoding="utf-8") as f:
-            json.dump(cleaned_result.model_dump(), f, indent=2, ensure_ascii=False)
+            json.dump(result.model_dump(), f, indent=2, ensure_ascii=False)
 
         logger.info("ASR checkpoint saved (preprocessed): %s", checkpoint_path)
 
