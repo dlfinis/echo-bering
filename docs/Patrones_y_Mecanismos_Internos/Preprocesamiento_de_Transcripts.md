@@ -72,27 +72,30 @@ El preprocesamiento se aplica en **dos puntos críticos**:
 #### 1. Durante la Transcripción (`src/processors/transcriber.py`)
 
 ```python
-def _save_checkpoint(self, result: TranscriptResult) -> None:
-    """Guarda el transcript preprocesado en el checkpoint."""
-    # Aplica preprocesamiento antes de guardar
-    cleaned_text = preprocess_transcript(result.text, remove_fillers=True)
+async def transcribe(self, audio_path: Path) -> TranscriptResult:
+    """Transcribe audio with preprocessing applied before returning."""
+    # ... transcription logic ...
     
-    cleaned_result = TranscriptResult(
+    # Apply preprocessing before saving AND returning
+    cleaned_result = self._preprocess_transcript(result)
+    self._save_checkpoint(cleaned_result)
+    return cleaned_result  # Return preprocessed transcript
+
+def _preprocess_transcript(self, result: TranscriptResult) -> TranscriptResult:
+    """Apply preprocessing to clean the transcript."""
+    cleaned_text = preprocess_transcript(result.text, remove_fillers=True)
+    return TranscriptResult(
         text=cleaned_text,
         confidence=result.confidence,
-        words=result.words,
-        segments=result.segments,
-        duration_s=result.duration_s,
-        provider=result.provider,
-        model=result.model,
+        # ... other fields ...
     )
-    
-    # Guarda con ensure_ascii=False para preservar caracteres especiales
-    with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump(cleaned_result.model_dump(), f, indent=2, ensure_ascii=False)
 ```
 
-**Importante**: Se usa `ensure_ascii=False` para que los caracteres especiales se guarden como caracteres Unicode reales, no como secuencias de escape.
+**Importante**: 
+- El preprocesamiento se aplica **antes de retornar** el transcript al pipeline
+- Esto asegura que el checkpoint de transcribe (`transcribe/data.json`) contenga texto limpio
+- El checkpoint de ASR (`asr/raw_transcript.json`) también contiene texto limpio
+- Se usa `ensure_ascii=False` para que los caracteres especiales se guarden como caracteres Unicode reales, no como secuencias de escape
 
 #### 2. Durante la Segmentación (`src/processors/transcript_processor.py`)
 
@@ -279,7 +282,32 @@ cleaned_text = result.text  # Sin preprocesamiento
 
 ## Troubleshooting
 
-### El checkpoint todavía tiene unicode escapes
+### El checkpoint de transcribe todavía tiene unicode escapes
+**Causa**: El `Transcriber.transcribe()` estaba retornando el transcript sin preprocesar
+
+**Solución**: Aplicar preprocesamiento **antes de retornar** el transcript al pipeline:
+
+```python
+async def transcribe(self, audio_path: Path) -> TranscriptResult:
+    result = await self._transcribe_with_retry(audio_path)
+    # Apply preprocessing before saving AND returning
+    cleaned_result = self._preprocess_transcript(result)
+    self._save_checkpoint(cleaned_result)
+    return cleaned_result  # Return preprocessed transcript
+```
+
+**Verificación**:
+```bash
+# Verificar checkpoint de transcribe
+python3 -c "
+import json
+data = json.load(open('output/*/.checkpoint/transcribe/data.json'))
+text = data['transcript']['text']
+print('¿Tiene unicode escapes?', '\\\\u' in text)
+"
+```
+
+### El checkpoint de ASR todavía tiene unicode escapes
 **Causa**: Falta `ensure_ascii=False` en `json.dump()`
 
 **Solución**: Verifica que `_save_checkpoint()` use:
@@ -317,6 +345,13 @@ r"\besto\.\s*$"  # Solo al final de oración
 - **Integración en processor**: `src/processors/transcript_processor.py:CleanTranscriptProcessor`
 
 ## Changelog
+
+### 2025-06-08 (Fix)
+- ✅ **Bug fix**: Transcriber ahora aplica preprocesamiento antes de retornar transcript
+- ✅ **Problema resuelto**: Checkpoint de transcribe contenía texto sin preprocesar
+- ✅ **Solución**: Refactorizar `_preprocess_transcript()` como método separado
+- ✅ **Resultado**: Todos los checkpoints (asr, transcribe, segment) ahora contienen texto limpio
+- ✅ **Commit**: `a0a4fe1` - "fix: apply preprocessing before returning transcript to pipeline"
 
 ### 2025-06-08
 - ✅ Implementación inicial del preprocesamiento
