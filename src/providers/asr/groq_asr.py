@@ -36,7 +36,7 @@ class GroqASRProvider(ASRProvider):
     when the verbose response includes word timing data.
     """
 
-    def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL):
+    def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL, request_delay_seconds: float = 0.6):
         self._api_key = api_key or os.environ.get("GROQ_API_KEY")
         if not self._api_key:
             raise PermanentProviderError(
@@ -45,6 +45,10 @@ class GroqASRProvider(ASRProvider):
             )
         self._model = model
         self._client: Groq | None = None
+        
+        # Configure retry policy with configurable delay
+        base_delay = max(1.0, request_delay_seconds)  # Ensure minimum 1 second for retries
+        self._retry_policy = RetryPolicy(max_retries=2, base_delay=base_delay, max_delay=10.0)
 
     @property
     def name(self) -> str:
@@ -65,7 +69,6 @@ class GroqASRProvider(ASRProvider):
             self._client = Groq(api_key=self._api_key)
         return self._client
 
-    @RetryPolicy(max_retries=2, base_delay=1.0, max_delay=10.0).retry
     async def transcribe(self, audio_path: str) -> TranscriptResult:
         """Transcribe audio file using Groq Whisper endpoint.
 
@@ -79,6 +82,10 @@ class GroqASRProvider(ASRProvider):
             TransientProviderError: Rate limit or server errors (retryable).
             PermanentProviderError: Auth errors or invalid requests (not retryable).
         """
+        return await self._retry_policy.retry(self._transcribe_impl)(audio_path)
+
+    async def _transcribe_impl(self, audio_path: str) -> TranscriptResult:
+        """Internal implementation of transcription without retry logic."""
         path = Path(audio_path)
         if not path.exists():
             raise PermanentProviderError(f"Audio file not found: {audio_path}")

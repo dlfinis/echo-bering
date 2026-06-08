@@ -38,6 +38,13 @@ class Config(BaseModel):
     max_budget_usd: float = Field(default=2.0, ge=0)  # Allow 0 for local processing
     chunk_duration_minutes: int = Field(default=20, gt=0)
     chunk_overlap_seconds: int = Field(default=30, ge=0, lt=60)
+    
+    # Provider-specific rate limiting (seconds between requests)
+    groq_request_delay_seconds: float = Field(default=0.6, ge=0)  # 100 RPM for free tier
+    assemblyai_request_delay_seconds: float = Field(default=0.1, ge=0)
+    
+    # Hugging Face token for private models
+    hf_token: Optional[str] = None
 
     # Confidence thresholds
     segmentation_confidence_threshold: float = Field(default=0.7, ge=0, le=1)

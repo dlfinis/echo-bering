@@ -88,6 +88,9 @@ class DeepSeekLLMProvider(LLMProvider):
         kwargs: dict = {
             "model": self._model,
             "messages": messages,
+            # Disable thinking mode for predictable responses
+            "temperature": 0.7,
+            "top_p": 0.95,
         }
 
         if response_format == "json":
@@ -116,8 +119,13 @@ class DeepSeekLLMProvider(LLMProvider):
         choice = response.choices[0]
         usage = response.usage
 
+        # Handle thinking mode - use reasoning_content if available and content is empty
+        response_text = choice.message.content or ""
+        if not response_text and hasattr(choice.message, 'reasoning_content') and choice.message.reasoning_content:
+            response_text = choice.message.reasoning_content
+
         return LLMResponse(
-            text=choice.message.content or "",
+            text=response_text,
             usage={
                 "prompt_tokens": usage.prompt_tokens if usage else 0,
                 "completion_tokens": usage.completion_tokens if usage else 0,

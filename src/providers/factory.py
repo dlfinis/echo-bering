@@ -18,6 +18,7 @@ def create_asr_provider(
     provider_name: str,
     model: Optional[str] = None,
     required_features: Optional[List[str]] = None,
+    **provider_kwargs,
 ) -> ASRProvider:
     """Create an ASR provider instance by name.
 
@@ -27,27 +28,42 @@ def create_asr_provider(
         required_features: Optional list of required feature names
             (e.g. ["word_timestamps"]). If provided, validates that
             the selected provider supports all requested features.
+        **provider_kwargs: Additional keyword arguments to pass to provider constructor
+            (e.g., request_delay_seconds, hf_token).
 
     Returns:
-        ASRProvider instance.
+        Configured ASRProvider instance.
 
     Raises:
-        ValueError: If provider name is not recognized.
-        CapabilityError: If required features are not supported.
+        ValueError: If provider_name is unknown.
+        CapabilityError: If required_features are not supported.
     """
-    provider_map = {
-        "groq": lambda: GroqASRProvider(model=model),
-        "assemblyai": lambda: AssemblyAIASRProvider(),
-        "openai": lambda: OpenAIASRProvider(model=model),
-        "mlx-whisper": lambda: MLXWhisperASR(model=model or "base"),
+    from src.providers.asr.groq_asr import GroqASRProvider
+    from src.providers.asr.assemblyai_asr import AssemblyAIASRProvider
+    from src.providers.asr.openai_asr import OpenAIASRProvider
+    from src.providers.asr.mlx_whisper_asr import MLXWhisperASR
+
+    # Filter kwargs by provider type to avoid passing irrelevant parameters
+    groq_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
+    assemblyai_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
+    openai_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
+    mlx_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds', 'hf_token']}
+
+    # Map provider names to constructors with filtered kwargs
+    provider_constructors = {
+        "groq": lambda: GroqASRProvider(model=model, **groq_kwargs),
+        "assemblyai": lambda: AssemblyAIASRProvider(model=model, **assemblyai_kwargs),
+        "openai": lambda: OpenAIASRProvider(model=model, **openai_kwargs),
+        "mlx": lambda: MLXWhisperASR(model=model, **mlx_kwargs),
+        "mlx-whisper": lambda: MLXWhisperASR(model=model, **mlx_kwargs),
     }
 
-    if provider_name not in provider_map:
+    if provider_name not in provider_constructors:
         raise ValueError(
-            f"Unknown ASR provider: {provider_name}. Valid: {list(provider_map.keys())}"
+            f"Unknown ASR provider: {provider_name}. Valid: {list(provider_constructors.keys())}"
         )
 
-    provider = provider_map[provider_name]()
+    provider = provider_constructors[provider_name]()
 
     # Validate required features if specified
     if required_features:

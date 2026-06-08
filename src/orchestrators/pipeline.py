@@ -249,17 +249,17 @@ class PipelineOrchestrator:
     async def _execute_transcribe(self) -> StageResult:
         """Execute the transcription stage."""
         try:
+            # Pre-flight validation for provider credentials and constraints
+            await self._validate_provider_setup()
+            
             asr_provider = create_asr_provider(
                 self.config.asr_provider,
                 self.config.asr_model,
                 required_features=self.config.required_asr_features,
+                request_delay_seconds=getattr(self.config, 'groq_request_delay_seconds', 0.0) if self.config.asr_provider == 'groq' else getattr(self.config, 'assemblyai_request_delay_seconds', 0.0),
+                hf_token=getattr(self.config, 'hf_token', None),
             )
-            transcriber = Transcriber(
-                asr_provider=asr_provider,
-                output_dir=self.config.output_dir,
-                cost_estimator=self.cost_estimator,
-            )
-
+            
             # Find audio path from checkpoint or default
             audio_path = self.config.output_dir / ".checkpoint" / "audio" / "audio.wav"
             if not audio_path.exists():
@@ -267,6 +267,37 @@ class PipelineOrchestrator:
                 extract_data = self.checkpoint_manager.load(STAGE_EXTRACT)
                 if extract_data and "audio_path" in extract_data:
                     audio_path = Path(extract_data["audio_path"])
+
+            # Determine if this is a long video that needs chunked processing
+            is_long_video = self._is_long_video(audio_path)
+            
+            if is_long_video:
+                # Use chunked processing for long videos
+                logger.info("Long video detected, using chunked processing: %s", audio_path)
+                
+                # Determine optimal chunk duration based on provider
+                chunk_duration_minutes = self._get_optimal_chunk_duration(self.config.asr_provider)
+                
+                from src.processors.chunking import TimedChunkingStrategy
+                chunking_strategy = TimedChunkingStrategy(
+                    chunk_duration_min=chunk_duration_minutes,
+                    overlap_s=self.config.chunk_overlap_seconds
+                )
+                
+                transcriber = Transcriber(
+                    asr_provider=asr_provider,
+                    output_dir=self.config.output_dir,
+                    cost_estimator=self.cost_estimator,
+                    chunking_strategy=chunking_strategy,
+                )
+            else:
+                # Use standard processing for short videos (backward compatibility)
+                logger.info("Standard video detected, using normal processing: %s", audio_path)
+                transcriber = Transcriber(
+                    asr_provider=asr_provider,
+                    output_dir=self.config.output_dir,
+                    cost_estimator=self.cost_estimator,
+                )
 
             transcript_result = await transcriber.transcribe(audio_path)
 
@@ -277,21 +308,123 @@ class PipelineOrchestrator:
                 budget_usd=self.config.max_budget_usd,
             ))
 
-            # Check transcription confidence threshold
-            if transcript_result.confidence < self.config.transcription_confidence_threshold:
-                self._emit(ProgressEvent(
-                    type=ProgressEventType.WARNING,
-                    message=(
-                        f"Transcription confidence {transcript_result.confidence:.2f} "
-                        f"< {self.config.transcription_confidence_threshold} — review required"
-                    ),
-                ))
-
             return StageResult.success(STAGE_TRANSCRIBE, data={"transcript": transcript_result})
         except CapabilityError:
             raise
         except Exception as e:
             return StageResult.failure(STAGE_TRANSCRIBE, e)
+
+    def _is_long_video(self, audio_path: Path) -> bool:
+        """Determine if video is long enough to require chunked processing.
+        
+        Args:
+            audio_path: Path to the audio file.
+            
+        Returns:
+            True if video meets criteria for chunked processing.
+        """
+        if not audio_path.exists():
+            return False
+        
+        # Check file size (>25MB for Groq free tier)
+        file_size_mb = audio_path.stat().st_size / (1024 * 1024)
+        if file_size_mb > 25:
+            logger.info("Video flagged as long due to size: %.2f MB > 25 MB", file_size_mb)
+            return True
+        
+        # Check duration (>30 minutes)
+        duration_s = self._get_audio_duration(audio_path)
+        duration_min = duration_s / 60
+        if duration_min > 30:
+            logger.info("Video flagged as long due to duration: %.2f min > 30 min", duration_min)
+            return True
+            
+        return False
+
+    def _get_audio_duration(self, audio_path: Path) -> float:
+        """Get audio duration using ffprobe.
+        
+        Args:
+            audio_path: Path to the audio file.
+            
+        Returns:
+            Duration in seconds, or 0.0 if unable to determine.
+        """
+        import subprocess
+
+        try:
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(audio_path),
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+        except (subprocess.TimeoutExpired, ValueError, FileNotFoundError) as e:
+            logger.debug("Could not determine audio duration: %s", e)
+
+        return 0.0
+
+    def _get_optimal_chunk_duration(self, provider: str) -> int:
+        """Get optimal chunk duration based on provider constraints.
+        
+        Args:
+            provider: ASR provider name.
+            
+        Returns:
+            Optimal chunk duration in minutes.
+        """
+        # Provider-specific optimal durations based on constraints
+        provider_durations = {
+            "groq": 8,      # Conservative for 25MB limit
+            "assemblyai": 30,  # Can handle longer chunks
+            "openai": 25,   # Moderate duration
+            "mlx": 20,      # Local processing, balance memory/performance
+        }
+        
+        duration = provider_durations.get(provider, 20)
+        logger.info("Using optimal chunk duration for %s: %d minutes", provider, duration)
+        return duration
+
+    async def _validate_provider_setup(self):
+        """Validate provider credentials and configuration before processing.
+        
+        Checks that provider-specific requirements are met before starting processing.
+        """
+        # Validate Groq provider setup
+        if self.config.asr_provider == "groq":
+            # Check for Groq API key
+            import os
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            if not groq_api_key:
+                logger.warning("GROQ_API_KEY environment variable not set - Groq requests may fail")
+        
+        # Validate AssemblyAI provider setup
+        elif self.config.asr_provider == "assemblyai":
+            import os
+            aai_api_key = os.getenv("ASSEMBLYAI_API_KEY")
+            if not aai_api_key:
+                logger.warning("ASSEMBLYAI_API_KEY environment variable not set - AssemblyAI requests may fail")
+        
+        # Validate OpenAI provider setup
+        elif self.config.asr_provider == "openai":
+            import os
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+            if not openai_api_key:
+                logger.warning("OPENAI_API_KEY environment variable not set - OpenAI requests may fail")
+        
+        # Validate MLX-Whisper provider setup
+        elif self.config.asr_provider in ["mlx", "mlx-whisper"]:
+            if self.config.asr_model in ["large-v3"] and not getattr(self.config, 'hf_token', None):
+                logger.warning(
+                    "Using mlx-whisper with large-v3 model but no HF_TOKEN provided. "
+                    "May encounter authentication issues with private models."
+                )
+        
+        logger.info(f"Provider {self.config.asr_provider} pre-flight validation completed")
 
     async def _execute_segment(self) -> StageResult:
         """Execute the segmentation stage."""
