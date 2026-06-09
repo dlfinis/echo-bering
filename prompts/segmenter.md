@@ -27,8 +27,11 @@ Cada capítulo debe tener un tema claro y ser útil como unidad de aprendizaje i
 **Guías específicas:**
 - Si el video dura menos de 5 minutos: considera 1-2 capítulos máximo
 - Si el video dura 5-15 minutos: considera 2-4 capítulos  
-- Si el video dura más de 15 minutos: considera 3-6 capítulos
-- **Nunca generes más de 8 capítulos** para ningún video
+- Si el video dura 15-30 minutos: considera 3-6 capítulos
+- Si el video dura 30-60 minutos: considera 6-10 capítulos
+- Si el video dura 1-2 horas: considera 10-15 capítulos
+- Si el video dura más de 2 horas: considera 15-20 capítulos
+- **Regla general**: capítulos de 5-10 minutos cada uno para videos largos
 - **Nunca generes menos de 1 capítulo**
 
 Devuelve un array JSON con la estructura EXACTA definida abajo.

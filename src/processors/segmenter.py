@@ -150,6 +150,9 @@ class ChapterSegmenter:
         
         Uses clean text for semantic analysis but applies real timing data
         during post-processing for precise chapter boundaries.
+        
+        For long transcripts (>30k characters), uses hierarchical segmentation
+        to process the transcript in manageable blocks.
 
         Args:
             transcript: Full video transcript result.
@@ -173,6 +176,28 @@ class ChapterSegmenter:
         logger.info(f"Prepared transcript length: {len(prepared_text)} characters")
         logger.info(f"First 200 chars of prepared text: {prepared_text[:200]}")
         
+        # For long transcripts, use hierarchical segmentation
+        if len(prepared_text) > 30000:  # ~30k characters threshold
+            logger.info(f"Long transcript detected ({len(prepared_text)} chars), using hierarchical segmentation")
+            return await self._segment_hierarchical(
+                prepared_text, transcript, video_title, video_topic, video_total_duration, processor
+            )
+        
+        # For shorter transcripts, use standard segmentation
+        return await self._segment_standard(
+            prepared_text, transcript, video_title, video_topic, video_total_duration, processor
+        )
+
+    async def _segment_standard(
+        self,
+        prepared_text: str,
+        transcript: TranscriptResult,
+        video_title: str,
+        video_topic: str,
+        video_total_duration: str,
+        processor: TranscriptProcessor,
+    ) -> List[Chapter]:
+        """Standard segmentation for shorter transcripts."""
         # Build the prompt with clean text (no technical timing details)
         prompt_kwargs = {
             "VIDEO_TITLE": video_title,
@@ -211,6 +236,106 @@ class ChapterSegmenter:
         raise ProviderError(
             f"Failed to parse LLM segmentation after {self.max_retries} retries: {last_error}"
         )
+
+    async def _segment_hierarchical(
+        self,
+        prepared_text: str,
+        transcript: TranscriptResult,
+        video_title: str,
+        video_topic: str,
+        video_total_duration: str,
+        processor: TranscriptProcessor,
+    ) -> List[Chapter]:
+        """Hierarchical segmentation for long transcripts.
+        
+        Divides the transcript into manageable blocks (~20k chars each),
+        processes each block independently, then consolidates the results.
+        
+        Args:
+            prepared_text: Preprocessed transcript text.
+            transcript: Full transcript result (for duration info).
+            video_title: Video title.
+            video_topic: Video topic.
+            video_total_duration: Total duration string.
+            processor: Transcript processor instance.
+            
+        Returns:
+            Consolidated list of Chapter objects.
+        """
+        # Split transcript into blocks of ~20k characters
+        block_size = 20000
+        blocks = []
+        for i in range(0, len(prepared_text), block_size):
+            blocks.append(prepared_text[i:i+block_size])
+        
+        logger.info(f"Split transcript into {len(blocks)} blocks for hierarchical processing")
+        
+        all_chapters = []
+        chapter_number = 1
+        
+        # Process each block
+        for block_idx, block_text in enumerate(blocks, 1):
+            logger.info(f"Processing block {block_idx}/{len(blocks)} ({len(block_text)} chars)")
+            
+            # Calculate approximate time range for this block
+            chars_per_second = len(prepared_text) / transcript.duration_s if transcript.duration_s > 0 else 15
+            block_start_char = (block_idx - 1) * block_size
+            block_end_char = min(block_idx * block_size, len(prepared_text))
+            
+            block_start_seconds = block_start_char / chars_per_second
+            block_end_seconds = block_end_char / chars_per_second
+            
+            # Convert to duration string for this block
+            def format_duration(seconds):
+                h = int(seconds // 3600)
+                m = int((seconds % 3600) // 60)
+                s = seconds % 60
+                return f"{h:02d}:{m:02d}:{s:06.3f}"
+            
+            block_duration = format_duration(block_end_seconds - block_start_seconds)
+            
+            # Adjust chapter numbering instruction for this block
+            block_title = f"{video_title} (Parte {block_idx} de {len(blocks)})"
+            
+            try:
+                # Process this block
+                block_chapters = await self._segment_standard(
+                    block_text,
+                    transcript,
+                    block_title,
+                    video_topic,
+                    block_duration,
+                    processor
+                )
+                
+                # Adjust timestamps and chapter numbers
+                for chapter in block_chapters:
+                    # Adjust timestamps to absolute positions
+                    chapter.start_seconds += block_start_seconds
+                    chapter.end_seconds += block_start_seconds
+                    
+                    # Convert back to time format
+                    chapter.start_time = format_duration(chapter.start_seconds)
+                    chapter.end_time = format_duration(chapter.end_seconds)
+                    
+                    # Update chapter number
+                    chapter.number = chapter_number
+                    chapter_number += 1
+                    
+                    all_chapters.append(chapter)
+                
+                logger.info(f"Block {block_idx} generated {len(block_chapters)} chapters")
+                
+            except Exception as e:
+                logger.error(f"Failed to process block {block_idx}: {e}")
+                # Continue with other blocks
+                continue
+        
+        if not all_chapters:
+            raise ProviderError("Hierarchical segmentation failed: no chapters generated from any block")
+        
+        logger.info(f"Hierarchical segmentation completed: {len(all_chapters)} total chapters")
+        return self._apply_confidence_flags(all_chapters)
 
     def _parse_response(self, response: str) -> List[Chapter]:
         """Parse LLM response into Chapter objects."""
