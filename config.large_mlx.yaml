@@ -1,0 +1,19 @@
+# Configuración para procesar video largo con MLX
+# Video: test_large.mp4 (2.4h) - Podcast de filosofía
+
+asr_provider: mlx-whisper
+asr_model: mlx-community/whisper-large-v3-turbo
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+
+input_video: sources/test_large.mp4
+project_name: test_large_mlx
+output_dir: ./output
+
+language: es
+preferred_chapters: 15
+max_budget_usd: 5.0
+
+chunk_duration_minutes: 20
+chunk_overlap_seconds: 5
+keep_checkpoints: true

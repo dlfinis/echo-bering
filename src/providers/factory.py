@@ -47,7 +47,8 @@ def create_asr_provider(
     groq_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
     assemblyai_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
     openai_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds']}
-    mlx_kwargs = {k: v for k, v in provider_kwargs.items() if k in ['request_delay_seconds', 'hf_token']}
+    # MLX doesn't accept request_delay_seconds (local provider)
+    mlx_kwargs = {}
 
     # Map provider names to constructors with filtered kwargs
     provider_constructors = {

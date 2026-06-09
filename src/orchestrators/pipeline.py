@@ -257,12 +257,26 @@ class PipelineOrchestrator:
             # Pre-flight validation for provider credentials and constraints
             await self._validate_provider_setup()
             
+            # Build provider kwargs based on provider type
+            provider_kwargs = {
+                "required_features": self.config.required_asr_features,
+            }
+            
+            # Add request_delay_seconds only for cloud providers that need rate limiting
+            if self.config.asr_provider in ['groq', 'assemblyai']:
+                if self.config.asr_provider == 'groq':
+                    provider_kwargs["request_delay_seconds"] = getattr(self.config, 'groq_request_delay_seconds', 0.0)
+                else:  # assemblyai
+                    provider_kwargs["request_delay_seconds"] = getattr(self.config, 'assemblyai_request_delay_seconds', 0.0)
+            
+            # Add hf_token for local providers that might need it
+            if self.config.asr_provider in ['mlx-whisper']:
+                provider_kwargs["hf_token"] = getattr(self.config, 'hf_token', None)
+            
             asr_provider = create_asr_provider(
                 self.config.asr_provider,
                 self.config.asr_model,
-                required_features=self.config.required_asr_features,
-                request_delay_seconds=getattr(self.config, 'groq_request_delay_seconds', 0.0) if self.config.asr_provider == 'groq' else getattr(self.config, 'assemblyai_request_delay_seconds', 0.0),
-                hf_token=getattr(self.config, 'hf_token', None),
+                **provider_kwargs
             )
             
             # Find audio path from checkpoint or default
