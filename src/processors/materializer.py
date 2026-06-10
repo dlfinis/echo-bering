@@ -5,18 +5,16 @@ and video clips. Uses ffmpeg fast cut (stream copy) for video extraction.
 """
 
 import json
+from datetime import datetime
 from pathlib import Path
 import shutil
 import subprocess
-from typing import List
-
-from src.models.transcription import WordTimestamp
-from src.providers.asr.base import TranscriptResult
-from src.orchestrators.utils import slugify
 from typing import List, Optional, Tuple, Union
 
-from src.models.chapter import Chapter, EnrichedChapter
+from src.models.transcription import WordTimestamp
+from src.orchestrators.utils import slugify
 from src.providers.asr.base import TranscriptResult
+from src.models.chapter import Chapter, EnrichedChapter
 from src.utils.errors import DependencyError
 from src.utils.logger import get_logger
 
@@ -121,6 +119,40 @@ def _group_words_into_entries(
             entries.append((current_start, current_end, text))
     
     return entries
+
+
+def _format_hms(seconds: float) -> str:
+    """Format seconds as H:MM:SS (or HH:MM:SS for long durations).
+
+    Args:
+        seconds: Time in seconds.
+
+    Returns:
+        Formatted timestamp string.
+    """
+    total = int(seconds)
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def _format_duration(seconds: float) -> str:
+    """Format a duration in human-readable form.
+
+    Args:
+        seconds: Duration in seconds.
+
+    Returns:
+        Duration like '2m 30s' (< 1h) or '1h 5m 3s' (>= 1h).
+    """
+    total = int(seconds)
+    hours = total // 3600
+    minutes = (total % 3600) // 60
+    secs = total % 60
+    if hours > 0:
+        return f"{hours}h {minutes}m {secs}s"
+    return f"{minutes}m {secs}s"
 
 
 class ChapterMaterializer:
@@ -408,3 +440,100 @@ class ChapterMaterializer:
 
         logger.info("Chapter materialized: %s", chapter_dir)
         return chapter_dir
+
+    def write_index(
+        self,
+        chapters: List[Union[Chapter, "EnrichedChapter"]],
+    ) -> Path:
+        """Write chapters/index.md listing all chapters in narrative order.
+
+        Sorts chapters by start_seconds ascending. Writes to
+        self.chapters_dir / "index.md".
+
+        Args:
+            chapters: List of Chapter or EnrichedChapter objects.
+
+        Returns:
+            Path to the written index.md file.
+        """
+        # Sort the FULL input list by start_seconds ascending (stable sort
+        # preserves input order as tie-breaker). EnrichedChapter carries the
+        # base Chapter nested under .chapter, so normalize before sorting.
+        def _start_seconds(c: Union[Chapter, "EnrichedChapter"]) -> float:
+            return c.chapter.start_seconds if isinstance(c, EnrichedChapter) else c.start_seconds
+
+        sorted_chapters = sorted(chapters, key=_start_seconds)
+
+        total = len(sorted_chapters)
+
+        def _end_seconds(c: Union[Chapter, "EnrichedChapter"]) -> float:
+            return c.chapter.end_seconds if isinstance(c, EnrichedChapter) else c.end_seconds
+
+        max_end = max((_end_seconds(c) for c in sorted_chapters), default=0.0)
+        source_duration = _format_hms(max_end)
+        generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Padding width: at least 2 digits, but grows with the total count.
+        pad = max(2, len(str(total)))
+
+        lines: List[str] = []
+        lines.append("# Chapters")
+        lines.append("")
+        lines.append(
+            f"Total: {total} chapters  •  Source duration: {source_duration}  •  "
+            f"Generated: {generated_at}"
+        )
+        lines.append("")
+
+        for idx, chapter in enumerate(sorted_chapters, start=1):
+            if isinstance(chapter, EnrichedChapter):
+                base = chapter.chapter
+                # EnrichedChapter has no .summary field; it carries .description
+                # (and .summary_bullets). Use description with transcript fallback,
+                # mirroring write_metadata() behavior.
+                summary = chapter.description or base.transcript
+                key_concepts = chapter.key_concepts
+                key_topics = key_concepts if isinstance(key_concepts, list) else []
+            else:
+                base = chapter
+                # Plain Chapter has no .summary field; fall back to a short
+                # transcript snippet.
+                summary = base.transcript[:200]
+                key_topics = []
+
+            slug = slugify(base.title)
+            start_s = base.start_seconds
+            end_s = base.end_seconds
+            duration = end_s - start_s
+
+            lines.append(f"## {idx:0{pad}d} — {base.title}")
+            lines.append("")
+            lines.append(f"- **Start**: {_format_hms(start_s)} ({int(start_s)}s)")
+            lines.append(f"- **End**: {_format_hms(end_s)} ({int(end_s)}s)")
+            lines.append(f"- **Duration**: {_format_duration(duration)}")
+            lines.append(f"- **Slug**: `{slug}`")
+            lines.append(f"- **Folder**: `{slug}/`")
+            lines.append("")
+
+            if summary:
+                cleaned = summary.strip()
+                if cleaned:
+                    lines.append(cleaned)
+                    lines.append("")
+
+            if key_topics:
+                lines.append(f"**Key topics**: {', '.join(str(t) for t in key_topics)}")
+                lines.append("")
+
+            if idx < total:
+                lines.append("---")
+                lines.append("")
+
+        content = "\n".join(lines).rstrip() + "\n"
+        output_path = self.chapters_dir / "index.md"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info("Index written: %s", output_path)
+        return output_path

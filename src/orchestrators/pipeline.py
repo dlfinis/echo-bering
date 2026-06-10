@@ -695,6 +695,14 @@ class PipelineOrchestrator:
                     total_chapters=len(chapters),
                 ))
 
+            # Generate index.md listing all chapters in narrative order
+            try:
+                materializer.write_index(chapters)
+                logger.info("Chapter index written: %s", materializer.chapters_dir / "index.md")
+            except Exception as e:
+                # Index is best-effort: log and continue, don't fail the stage
+                logger.warning("Failed to write chapter index: %s", e)
+
             return StageResult.success(
                 STAGE_MATERIALIZE,
                 data={"chapters_dir": str(materializer.chapters_dir)},

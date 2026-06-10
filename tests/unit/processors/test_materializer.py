@@ -404,3 +404,185 @@ class TestChapterMaterializerFullMaterialize:
         # key_topics should come from key_concepts
         assert "Concept A" in data["key_topics"]
         assert "Concept B" in data["key_topics"]
+
+
+class TestChapterMaterializerIndex:
+    """Test the chapters/index.md generation."""
+
+    def _make_chapter(self, *, number, title, start_seconds, end_seconds, transcript=""):
+        return Chapter(
+            number=number,
+            title=title,
+            start_time="00:00:00.000",
+            end_time="00:00:00.000",
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            confidence=0.85,
+            transcript=transcript,
+            needs_review=False,
+        )
+
+    def test_write_index_creates_file(self, tmp_path):
+        """index.md is created at chapters_dir/index.md."""
+        chapters = [self._make_chapter(number=1, title="First", start_seconds=0.0, end_seconds=60.0)]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        result = materializer.write_index(chapters)
+
+        expected = materializer.chapters_dir / "index.md"
+        assert result == expected
+        assert expected.exists()
+        assert expected.is_file()
+
+    def test_write_index_sorts_by_start_seconds(self, tmp_path):
+        """Chapters appear in narrative order (start_seconds ascending), not input order."""
+        chapters = [
+            self._make_chapter(number=3, title="Third", start_seconds=300.0, end_seconds=400.0),
+            self._make_chapter(number=1, title="First", start_seconds=0.0, end_seconds=100.0),
+            self._make_chapter(number=2, title="Second", start_seconds=150.0, end_seconds=250.0),
+        ]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index(chapters)
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        # Titles should appear in the file in start_seconds order, not input order
+        first_pos = content.find("## 01 — First")
+        second_pos = content.find("## 02 — Second")
+        third_pos = content.find("## 03 — Third")
+        assert first_pos != -1
+        assert second_pos != -1
+        assert third_pos != -1
+        assert first_pos < second_pos < third_pos
+
+    def test_write_index_zero_padded_numbers(self, tmp_path):
+        """Chapter headings are zero-padded (01, 02, …)."""
+        chapters = [
+            self._make_chapter(number=1, title="A", start_seconds=0.0, end_seconds=30.0),
+            self._make_chapter(number=2, title="B", start_seconds=30.0, end_seconds=60.0),
+            self._make_chapter(number=3, title="C", start_seconds=60.0, end_seconds=90.0),
+        ]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index(chapters)
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        assert "## 01 — A" in content
+        assert "## 02 — B" in content
+        assert "## 03 — C" in content
+
+    def test_write_index_handles_enriched_chapter(self, tmp_path):
+        """EnrichedChapter renders summary text and key topics line."""
+        from src.models.chapter import EnrichedChapter
+
+        base = self._make_chapter(
+            number=1, title="Intro", start_seconds=0.0, end_seconds=120.0,
+            transcript="base transcript fallback",
+        )
+        enriched = EnrichedChapter(
+            chapter=base,
+            description="This chapter introduces the topic thoroughly.",
+            context="Setting the stage",
+            summary_bullets=["Point A", "Point B"],
+            terms_used=[],
+            key_concepts=["Topic A", "Topic B"],
+            entities_detected={},
+            highlights=[],
+            pedagogy={},
+            confidence={"segmentation_score": 0.9, "needs_review": False},
+        )
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index([enriched])
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        assert "## 01 — Intro" in content
+        assert "This chapter introduces the topic thoroughly." in content
+        assert "**Key topics**: Topic A, Topic B" in content
+
+    def test_write_index_handles_plain_chapter(self, tmp_path):
+        """Plain Chapter works with no key topics line."""
+        chapter = self._make_chapter(
+            number=1, title="Plain", start_seconds=0.0, end_seconds=60.0,
+            transcript="Welcome to the first chapter of this video.",
+        )
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index([chapter])
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        assert "## 01 — Plain" in content
+        # No Key topics line for plain Chapter
+        assert "**Key topics**" not in content
+        # Slug is computed from the title
+        assert "**Slug**: `plain`" in content
+        assert "**Folder**: `plain/`" in content
+
+    def test_write_index_omits_key_topics_when_empty(self, tmp_path):
+        """No **Key topics** line when the list is empty."""
+        from src.models.chapter import EnrichedChapter
+
+        base = self._make_chapter(number=1, title="X", start_seconds=0.0, end_seconds=30.0)
+        enriched = EnrichedChapter(
+            chapter=base,
+            description="desc",
+            context="ctx",
+            summary_bullets=[],
+            terms_used=[],
+            key_concepts=[],  # empty
+            entities_detected={},
+            highlights=[],
+            pedagogy={},
+            confidence={"segmentation_score": 0.9, "needs_review": False},
+        )
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index([enriched])
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        assert "**Key topics**" not in content
+
+    def test_write_index_includes_duration_and_folder(self, tmp_path):
+        """Each chapter has **Duration** and **Folder** lines."""
+        chapters = [
+            self._make_chapter(number=1, title="Hello World", start_seconds=0.0, end_seconds=90.0),
+        ]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index(chapters)
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        assert "**Duration**:" in content
+        assert "1m 30s" in content
+        assert "**Folder**: `hello-world/`" in content
+
+    def test_write_index_source_duration_uses_max_end_seconds(self, tmp_path):
+        """Source duration header uses the max end_seconds across all chapters."""
+        chapters = [
+            self._make_chapter(number=1, title="A", start_seconds=0.0, end_seconds=120.0),
+            self._make_chapter(number=2, title="B", start_seconds=120.0, end_seconds=300.0),  # max
+            self._make_chapter(number=3, title="C", start_seconds=300.0, end_seconds=240.0),  # earlier
+        ]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index(chapters)
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        # 300s = 5 minutes -> 0:05:00
+        assert "Source duration: 0:05:00" in content
+        assert "Total: 3 chapters" in content
+
+    def test_write_index_separator_between_chapters(self, tmp_path):
+        """A --- separator appears between chapter sections."""
+        chapters = [
+            self._make_chapter(number=1, title="A", start_seconds=0.0, end_seconds=30.0),
+            self._make_chapter(number=2, title="B", start_seconds=30.0, end_seconds=60.0),
+            self._make_chapter(number=3, title="C", start_seconds=60.0, end_seconds=90.0),
+        ]
+        materializer = ChapterMaterializer(output_dir=tmp_path)
+
+        materializer.write_index(chapters)
+        content = (materializer.chapters_dir / "index.md").read_text(encoding="utf-8")
+
+        # Two separators between three chapters
+        assert content.count("\n---\n") == 2
