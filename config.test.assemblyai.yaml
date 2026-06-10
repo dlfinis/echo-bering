@@ -1,0 +1,15 @@
+asr_provider: assemblyai
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+input_video: ./sources/test_full.mp4
+project_name: test_full_assemblyai
+output_dir: ./output
+language: es
+cut_mode: fast
+max_budget_usd: 2.0
+preferred_chapters: 5
+
+# Processing optimization
+batch_processing: false  # AssemblyAI handles full audio
+word_timestamps: true    # AssemblyAI supports word-level timestamps with speaker diarization
+segment_timestamps: false

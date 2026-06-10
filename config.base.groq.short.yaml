@@ -1,0 +1,15 @@
+# Base configuration for short videos (<30 minutes)
+# Optimized for speed and low cost
+
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek  
+llm_model: deepseek-v4-flash
+language: es
+cut_mode: fast
+max_budget_usd: 0.25
+
+# No chunking needed for short videos
+batch_processing: false
+word_timestamps: false
+segment_timestamps: true

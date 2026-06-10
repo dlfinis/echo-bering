@@ -1,0 +1,16 @@
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+input_video: ./sources/test_full.mp4
+# project_name: test_full_charlie  # Uncomment to specify project name
+output_dir: ./output
+language: es
+cut_mode: fast
+max_budget_usd: 1.0
+chunk_duration_minutes: 2
+
+# Processing optimization
+batch_processing: true
+word_timestamps: false  # Groq doesn't support word-level timestamps
+segment_timestamps: true  # Use segment-level timestamps for timing

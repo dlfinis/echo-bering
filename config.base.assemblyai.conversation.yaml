@@ -1,0 +1,15 @@
+# Base configuration for conversational content (multiple speakers)
+# Requires AssemblyAI for speaker diarization
+
+asr_provider: assemblyai
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+language: es
+cut_mode: precise
+max_budget_usd: 3.0
+
+# Speaker diarization required
+required_asr_features: ["speaker_diarization"]
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

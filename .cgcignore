@@ -1,0 +1,10 @@
+.atl
+.git
+.mind
+.pytest_cache
+.venv
+docs
+opendesc
+output
+.coverage
+.DS_Store

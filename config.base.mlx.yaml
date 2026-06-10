@@ -1,0 +1,16 @@
+# Base configuration for MLX-Whisper ASR + DeepSeek LLM  
+# Optimized for offline/local processing with no API costs
+
+asr_provider: mlx-whisper
+asr_model: large
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+language: es  
+cut_mode: precise
+max_budget_usd: 0.1  # Minimal cost for LLM only
+preferred_chapters: null  # Let content drive chapter count
+
+# Processing optimization for local processing
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

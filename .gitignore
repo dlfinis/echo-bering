@@ -216,3 +216,28 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Echo-Bering pipeline
+.checkpoint/
+output/
+*.log
+sources/
+
+# Generated chapter files
+chapters/
+
+# Temporary video processing files
+*.wav
+*.mp4
+.tmp/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+.mind/
+# macOS
+.DS_Store
