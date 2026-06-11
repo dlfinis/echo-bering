@@ -1,0 +1,18 @@
+# Base configuration for Groq ASR + DeepSeek LLM
+# Optimized for cost/performance balance with segment-level timestamps
+
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek  
+llm_model: deepseek-v4-flash
+language: es
+cut_mode: fast
+max_budget_usd: 1.0
+preferred_chapters: null  # Let content drive chapter count
+
+# Processing optimization for Groq (25MB limit)
+chunk_duration_minutes: 12
+chunk_overlap_seconds: 30
+batch_processing: true
+word_timestamps: false
+segment_timestamps: true

@@ -1,0 +1,15 @@
+# Base configuration for AssemblyAI ASR + DeepSeek LLM
+# Optimized for highest quality with word-level timestamps and speaker diarization
+
+asr_provider: assemblyai
+llm_provider: deepseek
+llm_model: deepseek-v4-flash  
+language: es
+cut_mode: precise
+max_budget_usd: 2.0
+preferred_chapters: null  # Let content drive chapter count
+
+# Processing optimization for AssemblyAI (handles large files)
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

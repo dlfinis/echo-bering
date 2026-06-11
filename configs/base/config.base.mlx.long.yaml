@@ -1,0 +1,14 @@
+# Base configuration for long videos (>2h) with local processing
+# No API costs, uses mlx-whisper large model
+
+asr_provider: mlx-whisper
+asr_model: large
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+language: es
+cut_mode: precise
+max_budget_usd: 0.1  # Only for LLM processing
+
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

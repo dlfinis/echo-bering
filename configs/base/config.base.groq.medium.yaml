@@ -1,0 +1,17 @@
+# Base configuration for medium videos (30min - 2h)
+# Balanced approach with chunking
+
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek  
+llm_model: deepseek-v4-flash
+language: es
+cut_mode: fast
+max_budget_usd: 1.0
+
+# Chunking for medium videos
+chunk_duration_minutes: 15
+chunk_overlap_seconds: 30
+batch_processing: true
+word_timestamps: false
+segment_timestamps: true

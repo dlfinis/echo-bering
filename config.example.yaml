@@ -1,0 +1,73 @@
+# Echo-Bering — Example Configuration
+#
+# This is a self-documenting template. Copy it to a new file and edit values
+# as needed. You can override any value via CLI flags (--video, --project,
+# --output, --budget) without editing the file.
+#
+# Usage:
+#   uv run python -m src.main --config config.example.yaml
+#   uv run python -m src.main --config config.example.yaml --video sources/mi_clase.mp4
+#   uv run python -m src.main --config config.example.yaml --video X.mp4 --project mi_proyecto
+
+# ============================================================
+# ASR (speech-to-text) provider
+# ============================================================
+# Options: "mlx-whisper" (local, free, Apple Silicon only),
+#          "groq" (cloud, fast, $), "assemblyai" (cloud, best quality, $$$)
+asr_provider: mlx-whisper
+
+# Model name (provider-specific). Common values:
+#   mlx-whisper: "mlx-community/whisper-large-v3-turbo" (recommended),
+#                "mlx-community/whisper-large-v3" (slower but more accurate)
+#   groq:        "whisper-large-v3-turbo" (default), "whisper-large-v3"
+#   assemblyai:  omit asr_model (uses universal-2 by default)
+asr_model: mlx-community/whisper-large-v3-turbo
+
+# ============================================================
+# LLM (chapter segmentation + enrichment) provider
+# ============================================================
+# Currently only deepseek is well-tested. Options: "deepseek", "groq", "openai"
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+
+# ============================================================
+# Input / output
+# ============================================================
+# You can leave input_video blank and pass it via --video on the CLI.
+# The same goes for project_name (auto-generated from filename if absent).
+input_video: sources/dental-ana/curso-inicial.mp4
+project_name: curso_inicial
+output_dir: ./output
+
+# ============================================================
+# Language and chapter count
+# ============================================================
+language: es
+
+# Target chapter count. The LLM treats this as a recommendation:
+# it can produce FEWER chapters if the content has fewer natural themes,
+# but should not exceed this by more than ~20%. Set to null to use the
+# duration-based heuristic (1 chapter per ~5-10 minutes of content).
+preferred_chapters: 12
+
+# ============================================================
+# Budget and processing
+# ============================================================
+# Max USD to spend on cloud APIs (DeepSeek + Groq + AssemblyAI).
+# mlx-whisper is local/free so only LLM cost counts.
+max_budget_usd: 5.00
+
+# For long videos (>1h) the audio is split into chunks. With local ASR
+# (mlx-whisper), chunk_duration_minutes is the size of each chunk fed to
+# the model. With cloud ASR (Groq), it's also the upload size limit.
+chunk_duration_minutes: 20
+chunk_overlap_seconds: 5
+
+# Keep intermediate checkpoints after the run finishes (useful for debugging
+# or resuming from a specific stage without re-doing expensive steps).
+keep_checkpoints: true
+
+# Word-level timestamps are required for accurate chapter boundaries and
+# SRT subtitle generation. Disable only for very old/limited ASR backends.
+word_timestamps: true
+segment_timestamps: false

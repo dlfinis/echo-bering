@@ -1,0 +1,28 @@
+# Long video (1h-4h) processing with MLX-Whisper (local, Apple Silicon)
+# Most cost-effective option: no ASR API costs, only DeepSeek for LLM.
+#
+# Usage:
+#   uv run python -m src.main --config configs/large_mlx.yaml --video sources/mi_video.mp4
+#   uv run python -m src.main --config configs/large_mlx.yaml --video X.mp4 --project mi_proyecto
+
+asr_provider: mlx-whisper
+asr_model: mlx-community/whisper-large-v3-turbo
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+
+# input_video and project_name are optional — pass via --video/--project CLI flags.
+# input_video: sources/dental-ana/curso-inicial.mp4
+# project_name: curso_inicial
+# output_dir: ./output
+
+language: es
+preferred_chapters: 12
+max_budget_usd: 5.00
+
+chunk_duration_minutes: 20
+chunk_overlap_seconds: 5
+keep_checkpoints: true
+
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

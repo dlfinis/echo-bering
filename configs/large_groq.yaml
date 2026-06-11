@@ -1,0 +1,30 @@
+# Long video (1h-4h) processing with Groq (cloud, fast)
+# Uses Groq's hosted whisper-large-v3-turbo for ASR. Slightly more expensive
+# than MLX (~$0.10-$0.50 per video) but works on any machine and is faster.
+#
+# Usage:
+#   uv run python -m src.main --config configs/large_groq.yaml --video sources/mi_video.mp4
+
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+
+# input_video and project_name are optional — pass via --video/--project CLI flags.
+# input_video: sources/dental-ana/curso-inicial.mp4
+# project_name: curso_inicial
+# output_dir: ./output
+
+language: es
+preferred_chapters: 12
+max_budget_usd: 5.00
+
+# Groq has a 25MB upload limit per request, so chunking is required.
+# 8 minutes at 16kHz mono ≈ 15MB.
+chunk_duration_minutes: 8
+chunk_overlap_seconds: 5
+keep_checkpoints: true
+
+batch_processing: true
+word_timestamps: false
+segment_timestamps: true

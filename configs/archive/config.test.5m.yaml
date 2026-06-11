@@ -1,0 +1,15 @@
+asr_provider: mlx-whisper
+asr_model: large
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+input_video: ./sources/test_5m.mp4
+project_name: test_5m_validation
+output_dir: ./output
+language: es
+cut_mode: fast
+max_budget_usd: 0.1
+
+# Processing optimization
+batch_processing: false
+word_timestamps: true
+segment_timestamps: false

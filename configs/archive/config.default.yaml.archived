@@ -1,0 +1,95 @@
+# Echo-Bering Default Configuration
+# Optimizado para balance entre calidad, costo y velocidad
+
+# === ASR Configuration ===
+asr_provider: groq
+asr_model: whisper-large-v3-turbo
+# Alternativas:
+# - assemblyai: mejor calidad, más lento, más costoso
+# - mlx-whisper: local, offline, requiere GPU Apple Silicon
+
+# === LLM Configuration ===
+llm_provider: deepseek
+llm_model: deepseek-v4-flash
+# Alternativas:
+# - groq: más rápido, contexto limitado
+# - openai: calidad premium, más costoso
+
+# === Input/Output ===
+input_video: sources/test_20m.mp4
+project_name: echo_bering_video_20m
+output_dir: output
+language: es
+
+# === Chapter Generation ===
+preferred_chapters: 5
+# Rango típico: 3-10 capítulos
+# Se usa como guía, no como límite estricto
+
+# === Processing Strategy ===
+chunk_duration_minutes: 8
+# Groq free tier: 25MB limit ≈ 8-10 min de audio
+# Groq paid tier: puede aumentar a 15-20 min
+# AssemblyAI: puede usar 30+ min
+
+chunk_overlap_seconds: 5
+# Overlap entre chunks para evitar cortes abruptos
+
+# === Budget Control ===
+max_budget_usd: 2.00
+# Limita el gasto máximo
+# Se monitorea en tiempo real
+
+# === Quality Settings ===
+confidence_threshold: 0.7
+# Capítulos con confianza < 0.7 se marcan para revisión
+# Rango: 0.5 (permissivo) a 0.9 (estricto)
+
+review_low_confidence: true
+# Genera logs detallados para capítulos marcados
+
+# === Output Format ===
+cut_mode: fast
+# fast: usa ffmpeg para corte rápido
+# precise: re-codifica para precisión frame-exacta (más lento)
+
+include_timestamps: true
+# Incluye marcas de tiempo en el output
+
+# === Performance Tuning ===
+batch_processing: true
+# Procesa chunks en paralelo cuando es posible
+
+max_workers: 4
+# Máximo de workers para procesamiento paralelo
+
+# === Logging ===
+log_level: INFO
+# DEBUG, INFO, WARNING, ERROR
+# Usar DEBUG para troubleshooting
+
+# === Timestamp Strategy ===
+# Groq no soporta word-level timestamps, usa segment-level
+word_timestamps: false
+segment_timestamps: true
+
+# === Retry Strategy ===
+max_retries: 3
+# Intentos máximos por operación fallida
+
+retry_delay_seconds: 1.0
+# Delay base entre reintentos (exponencial)
+
+# === Checkpoint ===
+enable_checkpoints: true
+# Guarda progreso parcial para resumir tras errores
+
+keep_checkpoints: true
+# Conservar checkpoints después de completar exitosamente
+# Útil para debugging y análisis. Cambiar a false en producción
+
+# === Preprocessing (automático) ===
+# El preprocesamiento de transcripts está siempre activo:
+# - Limpieza de caracteres unicode
+# - Reducción de repeticiones excesivas
+# - Normalización de puntuación
