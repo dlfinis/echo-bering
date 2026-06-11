@@ -28,7 +28,7 @@ class Config(BaseModel):
     required_asr_features: List[str] = Field(default_factory=list)
 
     # Input/Output
-    input_video: Path
+    input_video: Optional[Path] = None
     output_dir: Path = Field(default=Path("./output"))
     project_name: Optional[str] = Field(default=None, description="Nombre del proyecto para subdirectorio")
     language: str = "es"
@@ -70,7 +70,9 @@ class Config(BaseModel):
 
     @field_validator("input_video")
     @classmethod
-    def validate_input_exists(cls, v: Path) -> Path:
+    def validate_input_exists(cls, v: Optional[Path]) -> Optional[Path]:
+        if v is None:
+            return v
         if not v.exists():
             raise ValueError(f"Input video not found: {v}")
         return v
@@ -143,7 +145,9 @@ def load_config(config_path: Path) -> Config:
             else:
                 yaml_data[config_key] = env_value
 
-    # Build Config — validation errors become ConfigError
+    # Build Config — validation errors become ConfigError.
+    # input_video is Optional at the model level so the CLI --video flag
+    # in main.py can supply it after loading.
     try:
         return Config(**yaml_data)
     except ValueError as e:
