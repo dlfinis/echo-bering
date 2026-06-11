@@ -135,8 +135,14 @@ class PipelineOrchestrator:
         if self.progress_callback:
             self.progress_callback(event)
 
-    async def execute(self) -> StageResult:
+    async def execute(self, force: bool = False) -> StageResult:
         """Execute the full pipeline.
+
+        Args:
+            force: If True, ignore existing checkpoints and re-run all stages
+                from scratch. Useful when the user wants to retry after a
+                bad run or change a non-deterministic stage (like LLM
+                segmentation).
 
         Returns:
             StageResult with overall success/failure status.
@@ -147,7 +153,10 @@ class PipelineOrchestrator:
         logger.info("Starting pipeline execution — %d stages", len(STAGE_ORDER))
 
         # Determine starting stage based on checkpoints
-        start_index = self._find_resume_stage()
+        start_index = 0 if force else self._find_resume_stage()
+        if force:
+            logger.info("Force flag set — clearing checkpoints and re-running all stages")
+            self.checkpoint_manager.clear()
 
         # Execute stages from resume point
         for i, stage_name in enumerate(STAGE_ORDER):
@@ -452,6 +461,7 @@ class PipelineOrchestrator:
             segmenter = ChapterSegmenter(
                 llm_provider=llm_provider,
                 confidence_threshold=self.config.segmentation_confidence_threshold,
+                preferred_chapters=self.config.preferred_chapters,
             )
 
             # Load transcript from checkpoint

@@ -335,13 +335,37 @@ class ChapterMaterializer:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # We re-encode (not stream copy) because stream copy cannot seek to
+        # non-keyframe boundaries — the GOP interval in our source is 30-36s,
+        # so a chapter that starts in the middle of a GOP shows the entire
+        # previous GOP (up to 36s of wrong content) as the "start" of the
+        # chapter. Re-encoding with libx264 + input-seek gives us a frame-
+        # accurate cut at the requested timestamp.
+        #
+        # Why CRF 30 (not 23 like before): the source is already h264 at
+        # ~470kbps. CRF 23 produces files ~2x larger (1078kbps) because
+        # ultrafast preset sacrifices compression for speed AND CRF 23 is
+        # higher quality than the source actually has. CRF 30 produces files
+        # at ~160kbps (smaller than source!) which is fine because the
+        # content is mostly static screen-shares of CAD software — loss is
+        # imperceptible. Total chapter size ends up around 40-50% of source.
+        #
+        # Note: -ss X -i src -t Y is correct here (NOT -to Y, which would
+        # be relative to the seek point). -t takes a DURATION.
+        duration = end_seconds - start_seconds
         cmd = [
             "ffmpeg",
             "-y",
-            "-i", str(source_video),
             "-ss", str(start_seconds),
-            "-to", str(end_seconds),
-            "-c", "copy",
+            "-i", str(source_video),
+            "-t", str(duration),
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "30",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            "-avoid_negative_ts", "make_zero",
             str(output_path),
         ]
 

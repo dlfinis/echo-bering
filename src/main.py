@@ -54,9 +54,10 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  echo-bering --config config.yaml
-  echo-bering --config config.yaml --output ./chapters
-  echo-bering --config config.yaml --budget 5.0
+  echo-bering --config configs/large_mlx.yaml --video sources/mi_clase.mp4
+  echo-bering --config configs/large_mlx.yaml --video X.mp4 --project mi_proyecto
+  echo-bering --config configs/large_mlx.yaml --video X.mp4 --project foo --output ./out --budget 3.0
+  echo-bering --config configs/large_mlx.yaml          # uses input_video from config
         """,
     )
 
@@ -67,22 +68,41 @@ Examples:
         help="Path to config.yaml file (default: ./config.yaml)",
     )
     parser.add_argument(
+        "--video",
+        type=str,
+        default=None,
+        help="Path to input video file (overrides config's input_video).",
+    )
+    parser.add_argument(
+        "--project", "-p",
+        type=str,
+        default=None,
+        help="Project name used as the output subdirectory (overrides config's project_name). "
+             "If omitted and config has no project_name, it's auto-derived from the video filename.",
+    )
+    parser.add_argument(
         "--output", "-o",
         type=str,
         default=None,
-        help="Output directory (overrides config.yaml)",
+        help="Output directory (overrides config's output_dir).",
     )
     parser.add_argument(
         "--budget", "-b",
         type=float,
         default=None,
-        help="Maximum budget in USD (overrides config.yaml)",
+        help="Maximum budget in USD (overrides config's max_budget_usd).",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="Re-run all stages from scratch, ignoring cached checkpoints.",
     )
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         default=False,
-        help="Enable verbose logging output",
+        help="Enable verbose logging output.",
     )
     parser.add_argument(
         "--version",
@@ -199,12 +219,13 @@ def setup_orchestrator(config: Config, callback: callable) -> PipelineOrchestrat
     return PipelineOrchestrator(config=config, progress_callback=callback)
 
 
-async def run_pipeline(config: Config, callback: callable) -> bool:
+async def run_pipeline(config: Config, callback: callable, force: bool = False) -> bool:
     """Run the full pipeline with progress display.
 
     Args:
         config: Validated pipeline configuration.
         callback: Progress event callback.
+        force: If True, re-run all stages from scratch.
 
     Returns:
         True if pipeline completed successfully.
@@ -214,16 +235,18 @@ async def run_pipeline(config: Config, callback: callable) -> bool:
     console = Console()
     console.print(Panel(
         f"[bold]Echo-Bering Pipeline[/]\n"
-        f"Input: {config.input_video}\n"
+        f"Input:  {config.input_video}\n"
+        f"Project: {config.project_name or '(auto)'}\n"
         f"Output: {config.output_dir}\n"
         f"ASR: {config.asr_provider} | LLM: {config.llm_provider}\n"
-        f"Budget: {format_cost(config.max_budget_usd)}",
+        f"Budget: {format_cost(config.max_budget_usd)}"
+        + ("\n[yellow]FORCE: re-running all stages, checkpoints will be cleared[/]" if force else ""),
         title="Starting Pipeline",
         border_style="blue",
     ))
 
     try:
-        result = await orchestrator.execute()
+        result = await orchestrator.execute(force=force)
 
         if result.success:
             console.print(Panel(
@@ -268,6 +291,21 @@ async def run_pipeline(config: Config, callback: callable) -> bool:
         return False
 
 
+def _derive_project_name_from_video(video_path: Path) -> str:
+    """Generate a project name from a video filename.
+
+    Strips extension and replaces non-alphanumeric characters with underscores.
+    Examples:
+        'mi clase.mp4' -> 'mi_clase'
+        '2022-Curso Dental Inicial.mp4' -> '2022_curso_dental_inicial'
+    """
+    import re
+    stem = video_path.stem
+    # Replace any non-alphanumeric/underscore character with underscore
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", stem).strip("_").lower()
+    return normalized or "untitled"
+
+
 def cli() -> None:
     """Main CLI entry point."""
     parser = create_parser()
@@ -279,6 +317,19 @@ def cli() -> None:
         config = load_and_validate_config(config_path)
 
         # Apply CLI overrides
+        if args.video:
+            video_path = Path(args.video)
+            if not video_path.exists():
+                raise ConfigError(f"Input video not found: {args.video}")
+            config.input_video = video_path
+
+        if args.project:
+            config.project_name = args.project
+        elif args.video and not config.project_name:
+            # Auto-derive project name from the video filename
+            config.project_name = _derive_project_name_from_video(config.input_video)
+            logger.info("Auto-derived project_name: %s", config.project_name)
+
         if args.output:
             config.output_dir = Path(args.output)
             config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -290,7 +341,7 @@ def cli() -> None:
         callback = setup_progress_display()
 
         # Run pipeline
-        success = asyncio.run(run_pipeline(config, callback))
+        success = asyncio.run(run_pipeline(config, callback, force=args.force))
 
         sys.exit(0 if success else 1)
 

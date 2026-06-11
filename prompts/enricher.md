@@ -32,8 +32,8 @@ El JSON debe ser válido, sin comentarios, sin markdown, sin texto adicional fue
     "slug": "titulo-en-kebab-case-sin-tildes"
   },
   "content": {
-    "description": "Descripción profunda de 3-5 oraciones sobre QUÉ se cubre en este capítulo, CÓMO se explica y QUÉ valor aporta al espectador.",
-    "context": "Contexto narrativo: cómo se conecta este capítulo con el anterior y el siguiente, qué asume el instructor que ya sabe el espectador, qué herramientas o frameworks se están usando.",
+    "description": "Descripción profunda de 3-5 oraciones sobre QUÉ se cubre en este capítulo, CÓMO se explica y QUÉ valor aporta al espectador. IMPORTANTE: si este capítulo AGRUPA varios subtemas (ej: 'configuración inicial completa' cubre margen + spacer + hombro), menciona EXPLÍCITAMENTE qué subtemas agrupa y por qué van juntos como una sola unidad de aprendizaje.",
+    "context": "Contexto narrativo: cómo se conecta este capítulo con el anterior y el siguiente, qué asume el instructor que ya sabe el espectador, qué herramientas o frameworks se están usando. Si este capítulo agrupa subtemas que podrían haber sido capítulos separados, explica la RAZÓN de la agrupación (ej: 'se agrupa porque comparten el mismo flujo de trabajo de configuración', 'se mantienen juntos porque el instructor los presenta como una sola unidad pedagógica').",
     "summary_bullets": [
       "Punto clave 1 (oración completa)",
       "Punto clave 2",

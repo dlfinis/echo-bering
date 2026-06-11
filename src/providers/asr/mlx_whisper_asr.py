@@ -76,12 +76,14 @@ class MLXWhisperASR(ASRProvider):
             # to the appropriate MLX models
             model_map = {
                 "tiny": "mlx-community/whisper-tiny",
-                "base": "mlx-community/whisper-base", 
+                "base": "mlx-community/whisper-base",
                 "small": "mlx-community/whisper-small",
                 "medium": "mlx-community/whisper-medium",
                 "large": "mlx-community/whisper-large",
                 "large-v2": "mlx-community/whisper-large-v2",
                 "large-v3": "mlx-community/whisper-large-v3",
+                "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+                "large-v3-mlx": "mlx-community/whisper-large-v3-turbo",
             }
             
             # Use default model if ours isn't in the map, or if there are auth issues
@@ -111,12 +113,14 @@ class MLXWhisperASR(ASRProvider):
             # Use a reasonable default based on model size
             model_confidence_map = {
                 "tiny": 0.6,
-                "base": 0.7, 
+                "base": 0.7,
                 "small": 0.8,
                 "medium": 0.85,
                 "large": 0.9,
                 "large-v2": 0.92,
                 "large-v3": 0.94,
+                "large-v3-turbo": 0.93,
+                "large-v3-mlx": 0.93,
             }
             confidence = model_confidence_map.get(self._model, 0.7)
             

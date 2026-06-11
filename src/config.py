@@ -50,6 +50,15 @@ class Config(BaseModel):
     segmentation_confidence_threshold: float = Field(default=0.7, ge=0, le=1)
     transcription_confidence_threshold: float = Field(default=0.6, ge=0, le=1)
 
+    # Segmentation
+    preferred_chapters: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Target chapter count (recommendation). The LLM may produce fewer if the "
+                    "content has fewer natural themes, but should not exceed it by more than ~20%.",
+    )
+
     # Output generation flags
     generate_subtitles: bool = True
     generate_summaries: bool = True

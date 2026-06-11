@@ -33,6 +33,14 @@ DEFAULT_CONFIDENCE_THRESHOLD = 0.7
 DEFAULT_MAX_RETRIES = 2
 
 
+def _format_seconds_as_hms(seconds: float) -> str:
+    """Format seconds as HH:MM:SS.mmm."""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
 def _extract_json_from_response(response: str) -> List[Dict[str, Any]]:
     """Extract JSON array from LLM response text with robust parsing."""
     # Use the robust JSON extractor
@@ -122,6 +130,7 @@ class ChapterSegmenter:
         prompt_filename: str = "segmenter.md",
         confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
         max_retries: int = DEFAULT_MAX_RETRIES,
+        preferred_chapters: Optional[int] = None,
     ):
         """Initialize ChapterSegmenter.
 
@@ -131,12 +140,16 @@ class ChapterSegmenter:
             prompt_filename: Default filename of the segmenter prompt template.
             confidence_threshold: Minimum acceptable segmentation confidence.
             max_retries: Maximum retries for malformed LLM responses.
+            preferred_chapters: Target number of chapters. The LLM treats this as a
+                recommendation, not a hard cap — it can produce fewer if the content
+                has fewer natural themes, but should not exceed it by more than ~20%.
         """
         self.llm_provider = llm_provider
         self.prompt_manager = prompt_manager or PromptManager()
         self.prompt_filename = prompt_filename
         self.confidence_threshold = confidence_threshold
         self.max_retries = max_retries
+        self.preferred_chapters = preferred_chapters
 
     async def segment(
         self,
@@ -176,14 +189,34 @@ class ChapterSegmenter:
         logger.info(f"Prepared transcript length: {len(prepared_text)} characters")
         logger.info(f"First 200 chars of prepared text: {prepared_text[:200]}")
         
-        # For long transcripts, use hierarchical segmentation
-        if len(prepared_text) > 30000:  # ~30k characters threshold
-            logger.info(f"Long transcript detected ({len(prepared_text)} chars), using hierarchical segmentation")
+        # For long transcripts with a user-defined target, prefer a single-pass
+        # segmentation so the LLM can group chapters thematically across the whole video.
+        # Hierarchical segmentation (block-based) is kept as a fallback when no
+        # preferred_chapters is provided OR the transcript is extremely large.
+        long_threshold = 30000
+        very_long_threshold = 120000  # ~2h of transcript prepared text
+
+        if len(prepared_text) > long_threshold and (
+            self.preferred_chapters is None or len(prepared_text) > very_long_threshold
+        ):
+            logger.info(
+                "Long transcript detected (%d chars) and no preferred_chapters or very long, "
+                "using hierarchical segmentation",
+                len(prepared_text),
+            )
             return await self._segment_hierarchical(
                 prepared_text, transcript, video_title, video_topic, video_total_duration, processor
             )
-        
-        # For shorter transcripts, use standard segmentation
+
+        if len(prepared_text) > long_threshold and self.preferred_chapters is not None:
+            logger.info(
+                "Long transcript detected (%d chars) BUT preferred_chapters=%d is set; "
+                "using single-pass segmentation to preserve thematic grouping",
+                len(prepared_text),
+                self.preferred_chapters,
+            )
+
+        # Single-pass segmentation (short, long-with-target, or very-long fallback above)
         return await self._segment_standard(
             prepared_text, transcript, video_title, video_topic, video_total_duration, processor
         )
@@ -205,11 +238,19 @@ class ChapterSegmenter:
             "VIDEO_TOTAL_DURATION": video_total_duration,
             "FULL_TRANSCRIPT": prepared_text,
         }
-            
+
+        if self.preferred_chapters is not None:
+            prompt_kwargs["PREFERRED_CHAPTERS"] = self.preferred_chapters
+
         prompt = self.prompt_manager.load_and_inject(
             processor.get_prompt_filename(),
             **prompt_kwargs
         )
+
+        # Pre-render the new {{...}} blocks for preferred_chapters guidance.
+        # These aren't simple variable substitutions — they're conditional sections
+        # the LLM should see only when preferred_chapters is set.
+        prompt = self._render_chapter_guidance(prompt, video_total_duration)
 
         # Call LLM with retry logic
         last_error: Optional[Exception] = None
@@ -220,7 +261,24 @@ class ChapterSegmenter:
                     response_format="json",
                 )
 
+                # Debug: log raw LLM response so we can see what the model actually
+                # returned (helps diagnose cases where the LLM collapses everything
+                # into 1 chapter, or where the response was truncated).
+                usage = getattr(response, "usage", None) or {}
+                logger.info(
+                    "LLM response received: %d chars, tokens(prompt=%s completion=%s total=%s). First 300: %s",
+                    len(response.text or ""),
+                    usage.get("prompt_tokens"),
+                    usage.get("completion_tokens"),
+                    usage.get("total_tokens"),
+                    (response.text or "")[:300],
+                )
+
                 chapters = self._parse_response(response.text)
+                # Assign transcript text per chapter from the original ASR data
+                # (not from the LLM response — the LLM prompt tells the model NOT
+                # to include the transcript, to avoid max_tokens truncation).
+                chapters = self._assign_transcripts(chapters, transcript, prepared_text)
                 return self._apply_confidence_flags(chapters)
 
             except (json.JSONDecodeError, ValueError, KeyError, TypeError) as e:
@@ -298,15 +356,29 @@ class ChapterSegmenter:
             block_title = f"{video_title} (Parte {block_idx} de {len(blocks)})"
             
             try:
-                # Process this block
-                block_chapters = await self._segment_standard(
-                    block_text,
-                    transcript,
-                    block_title,
-                    video_topic,
-                    block_duration,
-                    processor
-                )
+                # Process this block — pass the global target so each block is
+                # proportional (preferred/total_blocks) when in hierarchical mode.
+                block_target = None
+                if self.preferred_chapters is not None:
+                    block_target = max(1, round(self.preferred_chapters / len(blocks)))
+                    logger.info(
+                        "Block %d target chapters: %d (preferred=%d / %d blocks)",
+                        block_idx, block_target, self.preferred_chapters, len(blocks),
+                    )
+                # Temporarily swap preferred_chapters for the per-block target
+                original_target = self.preferred_chapters
+                self.preferred_chapters = block_target
+                try:
+                    block_chapters = await self._segment_standard(
+                        block_text,
+                        transcript,
+                        block_title,
+                        video_topic,
+                        block_duration,
+                        processor
+                    )
+                finally:
+                    self.preferred_chapters = original_target
                 
                 # Adjust timestamps and chapter numbers
                 for chapter in block_chapters:
@@ -338,11 +410,102 @@ class ChapterSegmenter:
         return self._apply_confidence_flags(all_chapters)
 
     def _parse_response(self, response: str) -> List[Chapter]:
-        """Parse LLM response into Chapter objects."""
+        """Parse LLM response into Chapter objects.
+
+        Transcript is intentionally NOT read from the LLM response — we
+        assign it later from the original ASR data via _assign_transcripts.
+        This avoids max_tokens truncation when the LLM tries to repeat the
+        full transcript in each chapter.
+        """
         raw_chapters = _extract_json_from_response(response)
         chapters = []
         for raw in raw_chapters:
-            chapters.append(Chapter(**raw))
+            # Strip any 'transcript' key the LLM may have included — we ignore it
+            raw.pop("transcript", None)
+            # Default transcript to empty string; will be filled by _assign_transcripts
+            raw.setdefault("transcript", "")
+            try:
+                chapters.append(Chapter(**raw))
+            except Exception as e:
+                logger.warning("Skipping malformed chapter from LLM: %s — %s", raw, e)
+        return self._sanitize_chapters(chapters)
+
+    @staticmethod
+    def _sanitize_chapters(chapters: List[Chapter], min_duration_s: float = 5.0) -> List[Chapter]:
+        """Drop empty/zero-length chapters and renumber sequentially.
+
+        LLMs sometimes return a final "summary/wrap-up" chapter with
+        end_seconds == start_seconds, which breaks ffmpeg and adds no value.
+        We drop any chapter shorter than `min_duration_s` and renumber the rest.
+        Note: we DO NOT check the transcript field here because the LLM is no
+        longer providing transcripts (they're assigned after parsing).
+        """
+        sanitized: List[Chapter] = []
+        for ch in chapters:
+            duration = ch.end_seconds - ch.start_seconds
+            if duration < min_duration_s:
+                logger.warning(
+                    "Dropping empty chapter #%d '%s' (duration=%.1fs)",
+                    ch.number, ch.title, duration,
+                )
+                continue
+            sanitized.append(ch)
+
+        # Renumber sequentially from 1 to avoid gaps after dropping chapters.
+        for idx, ch in enumerate(sanitized, 1):
+            ch.number = idx
+        return sanitized
+
+    @staticmethod
+    def _assign_transcripts(
+        chapters: List[Chapter],
+        transcript: TranscriptResult,
+        prepared_text: str,
+    ) -> List[Chapter]:
+        """Assign transcript text to each chapter from the original ASR result.
+
+        Uses the ASR's word-level timestamps (when available) to slice the
+        transcript text per chapter. Falls back to character proportional
+        slicing if word timestamps are missing.
+
+        Also handles the case where the LLM produced an end_seconds slightly
+        beyond the actual video duration (clamped to transcript length).
+        """
+        duration = transcript.duration_s or 0.0
+        words = transcript.words or []
+        has_word_ts = len(words) > 0
+
+        # First pass: clamp all chapter timestamps to [0, duration]
+        if duration > 0:
+            for ch in chapters:
+                if ch.start_seconds < 0:
+                    ch.start_seconds = 0
+                if ch.end_seconds > duration:
+                    logger.warning(
+                        "Clamping chapter '%s' end_seconds %.1f -> %.1f (video duration)",
+                        ch.title, ch.end_seconds, duration,
+                    )
+                    ch.end_seconds = duration
+                    ch.end_time = _format_seconds_as_hms(ch.end_seconds)
+
+        # Second pass: assign transcripts
+        for ch in chapters:
+            if has_word_ts:
+                # Slice using word timestamps
+                ch_words = [
+                    w.word for w in words
+                    if w.start >= ch.start_seconds and w.end <= ch.end_seconds
+                ]
+                ch.transcript = " ".join(ch_words).strip()
+            else:
+                # Fallback: proportional character slicing from prepared_text
+                if duration > 0 and len(prepared_text) > 0:
+                    start_char = int((ch.start_seconds / duration) * len(prepared_text))
+                    end_char = int((ch.end_seconds / duration) * len(prepared_text))
+                    ch.transcript = prepared_text[start_char:end_char].strip()
+                else:
+                    ch.transcript = ""
+
         return chapters
 
     def _apply_confidence_flags(self, chapters: List[Chapter]) -> List[Chapter]:
@@ -358,3 +521,65 @@ class ChapterSegmenter:
                     self.confidence_threshold,
                 )
         return chapters
+
+    @staticmethod
+    def _parse_hms_duration(duration: str) -> int:
+        """Parse 'HH:MM:SS.mmm' or 'MM:SS' duration string into total seconds."""
+        try:
+            parts = duration.split(":")
+            if len(parts) == 3:
+                h, m, s = parts
+                return int(h) * 3600 + int(m) * 60 + int(float(s))
+            if len(parts) == 2:
+                m, s = parts
+                return int(m) * 60 + int(float(s))
+            return int(float(parts[0]))
+        except (ValueError, AttributeError):
+            return 0
+
+    def _render_chapter_guidance(self, prompt: str, total_duration: str) -> str:
+        """Render the {{PREFERRED_CHAPTERS_BLOCK}} and {{CHAPTER_GUIDANCE}} placeholders.
+
+        - PREFERRED_CHAPTERS_BLOCK: a short line telling the LLM the user's target.
+        - CHAPTER_GUIDANCE: the actual numeric rules the LLM should follow, which
+          differ based on whether preferred_chapters is set or not.
+        """
+        total_seconds = self._parse_hms_duration(total_duration)
+        if self.preferred_chapters is not None:
+            preferred_block = (
+                f"Número de capítulos objetivo (recomendación del usuario): **{self.preferred_chapters}**\n"
+                f"Este es un OBJETIVO FLEXIBLE: el LLM puede generar MENOS capítulos si el contenido "
+                f"tiene menos temas naturales, pero no debe exceder este número en más de ~20%."
+            )
+            chapter_guidance = (
+                f"- **El usuario pidió ~{self.preferred_chapters} capítulos**. Intenta acercarte a ese número.\n"
+                f"- Si el contenido solo tiene {max(1, self.preferred_chapters - 3)} temas reales, genera {max(1, self.preferred_chapters - 3)} capítulos "
+                f"(es mejor tener MENOS capítulos bien agrupados que muchos fragmentados).\n"
+                f"- Si el contenido tiene más temas de los que el target permite, mantén el target y agrupa "
+                f"temas relacionados en capítulos temáticos más amplios (ej: 'Diseño CAD completo' en lugar de "
+                f"'diseño de margen', 'diseño de spacer', 'diseño de hombro' por separado).\n"
+                f"- Prioriza SIEMPRE la coherencia temática sobre el número exacto."
+            )
+        else:
+            preferred_block = (
+                "Número de capítulos objetivo: **no especificado — usar heurística de duración**\n"
+                "Aplica las guías por defecto según la duración del video (ver más abajo)."
+            )
+            minutes = total_seconds / 60
+            if minutes < 5:
+                chapter_guidance = "- Video de menos de 5 minutos: 1-2 capítulos máximo."
+            elif minutes < 15:
+                chapter_guidance = "- Video de 5-15 minutos: 2-4 capítulos."
+            elif minutes < 30:
+                chapter_guidance = "- Video de 15-30 minutos: 3-6 capítulos."
+            elif minutes < 60:
+                chapter_guidance = "- Video de 30-60 minutos: 6-10 capítulos."
+            elif minutes < 120:
+                chapter_guidance = "- Video de 1-2 horas: 10-15 capítulos."
+            else:
+                chapter_guidance = "- Video de más de 2 horas: 15-20 capítulos."
+            chapter_guidance += "\n- Regla general: capítulos de 5-10 minutos cada uno para videos largos."
+
+        prompt = prompt.replace("{{PREFERRED_CHAPTERS_BLOCK}}", preferred_block)
+        prompt = prompt.replace("{{CHAPTER_GUIDANCE}}", chapter_guidance)
+        return prompt

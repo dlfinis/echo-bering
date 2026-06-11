@@ -3,36 +3,41 @@
 ```text
 # ROL
 Eres un experto en segmentación de contenido educativo en video.
-Tu trabajo es analizar una transcripción completa de un video y dividirla en capítulos temáticos coherentes.
+Tu trabajo es analizar una transcripción completa de un video y dividirla en capítulos temáticos coherentes, AGRUPANDO subtemas relacionados en unidades de aprendizaje completas y autocontenidas.
 
-# PRINCIPIOS DE SEGMENTACIÓN
-1. **Cada capítulo debe representar un tema desarrollado completamente**, no fragmentos o ideas incompletas.
-2. **Busca cambios naturales de tema** en la narrativa del instructor.
-3. **Evita capítulos demasiado cortos** (menos de 30 segundos) o demasiado largos (más de 8 minutos).
-4. **Prioriza la coherencia temática** sobre cualquier otro criterio.
-5. **No fuerces divisiones artificiales** si el contenido fluye naturalmente.
+# PRINCIPIOS DE SEGMENTACIÓN (ORDEN DE PRIORIDAD)
+1. **AGRUPAMIENTO TEMÁTICO** (máxima prioridad): Si el instructor desarrolla un tema amplio con varios subtemas (ej: "diseño de cofias" → margen + spacer + hombro + suavizado), UNIFÍCALOS en un solo capítulo. NO fragmentes un tema amplio en micro-capítulos por cada subtema.
+2. **Cada capítulo debe representar un módulo o lección completa**, no fragmentos ni ideas sueltas.
+3. **Busca cambios NATURALES y GRANDES de tema** en la narrativa del instructor. Si el instructor pasa de "diseño CAD" a "calibración de resina 3D", ahí hay un corte.
+4. **No fuerces divisiones** para alcanzar un número exacto. Si el contenido tiene solo 8 temas reales, genera 8 capítulos.
+5. **Tampoco generes de menos**: si el contenido tiene 15 temas distintos, genera 15.
+6. **Evita capítulos demasiado cortos** (menos de 3 minutos) o demasiado largos (más de 30 minutos).
 
 # CONTEXTO DEL VIDEO
 Título del video: {{VIDEO_TITLE}}
 Tema general: {{VIDEO_TOPIC}}
 Duración total: {{VIDEO_TOTAL_DURATION}}
+{{PREFERRED_CHAPTERS_BLOCK}}
 
 # TRANSCRIPCIÓN COMPLETA
 {{FULL_TRANSCRIPT}}
 
 # TAREA
-Analiza la transcripción y divídela en capítulos temáticos coherentes.
-Cada capítulo debe tener un tema claro y ser útil como unidad de aprendizaje independiente.
+Analiza la transcripción completa y divídela en capítulos temáticos AGRUPADOS.
+Cada capítulo debe ser una unidad de aprendizaje coherente y autocontenida.
 
-**Guías específicas:**
-- Si el video dura menos de 5 minutos: considera 1-2 capítulos máximo
-- Si el video dura 5-15 minutos: considera 2-4 capítulos  
-- Si el video dura 15-30 minutos: considera 3-6 capítulos
-- Si el video dura 30-60 minutos: considera 6-10 capítulos
-- Si el video dura 1-2 horas: considera 10-15 capítulos
-- Si el video dura más de 2 horas: considera 15-20 capítulos
-- **Regla general**: capítulos de 5-10 minutos cada uno para videos largos
-- **Nunca generes menos de 1 capítulo**
+**Reglas de número de capítulos:**
+
+{{CHAPTER_GUIDANCE}}
+
+**Reglas de agrupación temática:**
+- Si varios párrafos/subtemas hablan del MISMO módulo (ej: configuración inicial de un software), van juntos en UN capítulo aunque abarquen 20 minutos.
+- NO dividas por cambio de ejercicio o de ejemplo si el tema es el mismo.
+- SÍ divides cuando el instructor empieza un módulo nuevo (ej: pasa de "diseño" a "fabricación").
+- **NO dividas el video en bloques temporales iguales** (ej: "12 capítulos de 20 minutos cada uno"). La duración de cada capítulo debe variar naturalmente según el contenido: un tema complejo puede abarcar 35 minutos, un cierre puede durar 3 minutos.
+- **El último capítulo debe incluir TODO el contenido restante**, incluyendo cualquier despedida, Q&A o cierre. NO generes un capítulo final separado de "resumen" o "despedida" si el contenido ya está cubierto en el capítulo anterior.
+
+**Nunca generes menos de 1 capítulo.**
 
 Devuelve un array JSON con la estructura EXACTA definida abajo.
 El JSON debe ser válido, sin comentarios, sin markdown, sin texto adicional fuera del JSON.
@@ -44,13 +49,23 @@ El JSON debe ser válido, sin comentarios, sin markdown, sin texto adicional fue
     "number": 1,
     "title": "Título conciso del capítulo (máx 6 palabras)",
     "start_time": "HH:MM:SS.mmm",
-    "end_time": "HH:MM:SS.mmm", 
+    "end_time": "HH:MM:SS.mmm",
     "start_seconds": 0.0,
-    "end_seconds": 330.0,
-    "confidence": 0.92,
-    "transcript": "Transcripción completa de este capítulo..."
+    "end_seconds": 900.0,
+    "confidence": 0.85
+  },
+  {
+    "number": 2,
+    "title": "...",
+    "start_time": "...",
+    "end_time": "...",
+    "start_seconds": 900.0,
+    "end_seconds": 1800.0,
+    "confidence": 0.85
   }
 ]
+
+**IMPORTANTE: NO incluyas el campo `transcript` en tu respuesta.** El transcript se asigna automáticamente después desde la transcripción completa. Incluir el transcript por capítulo hace que tu respuesta supere el límite de tokens y se trunque, perdiendo todos los capítulos.
 
 # REGLAS CRÍTICAS
 

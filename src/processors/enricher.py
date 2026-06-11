@@ -147,6 +147,14 @@ class MetadataEnricher:
         highlights_data = data.get("highlights", [])
         highlights = []
         for h in highlights_data:
+            # The LLM sometimes returns highlights as a list of strings (just
+            # quotes without the structured metadata). Normalize to dicts so
+            # the rest of the pipeline doesn't crash.
+            if isinstance(h, str):
+                h = {"quote": h}
+            elif not isinstance(h, dict):
+                logger.warning("Skipping highlight of unexpected type: %s", type(h).__name__)
+                continue
             try:
                 highlights.append(
                     {
